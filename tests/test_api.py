@@ -160,7 +160,32 @@ def test_sync_all_open_endpoint() -> None:
 
 def test_ui_endpoint_renders_dashboard() -> None:
     client, repo, _, _ = _client()
-    repo.save_daily_report(DailyReport(date="2026-03-10", markdown="# Polaris PR Intelligence Report\n\n## PRs Needing Review"))
+    repo.save_daily_report(
+        DailyReport(
+            date="2026-03-10",
+            markdown="# Polaris PR Intelligence Report\n\n## PRs Needing Review\n- none\n\n## New/Updated PRs Today\n- [#99](https://example.com/pr/99) UI wiring | updated=2026-03-10T00:00:00+00:00",
+        )
+    )
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=99,
+            title="UI wiring",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=3,
+            deletions=1,
+            html_url="https://example.com/pr/99",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
 
     resp = client.get("/ui")
 
@@ -170,6 +195,10 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Latest Report" in resp.text
     assert "PRs Needing Review" in resp.text
     assert "Deep Review Details" in resp.text
+    assert "Review Jobs" in resp.text
+    assert "New/Updated PRs Today" in resp.text
+    assert "Run Review" in resp.text
+    assert resp.text.count("New/Updated PRs Today") == 1
 
 
 def test_pr_review_endpoints() -> None:
@@ -222,6 +251,10 @@ def test_pr_review_async_job_mode() -> None:
     by_pr_data = by_pr.json()
     assert by_pr_data["ok"] is True
     assert by_pr_data["job"]["job_id"] == job_id
+    ui = client.get("/ui")
+    assert ui.status_code == 200
+    assert "Review Jobs" in ui.text
+    assert job_id in ui.text
 
 
 def test_run_open_pr_reviews_endpoint() -> None:

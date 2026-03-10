@@ -76,6 +76,21 @@ def create_app(
         close_list()
         return "\n".join(parts)
 
+    def _remove_markdown_section(markdown: str, heading: str) -> str:
+        lines = markdown.splitlines()
+        out: list[str] = []
+        skip = False
+        target = f"## {heading}".strip()
+        for line in lines:
+            if line.strip() == target:
+                skip = True
+                continue
+            if skip and line.startswith("## "):
+                skip = False
+            if not skip:
+                out.append(line)
+        return "\n".join(out).strip()
+
     def _stats() -> dict:
         needs_review_count = sum(1 for s in repo.review_signals.values() if s.needs_review)
         interesting_issue_count = sum(1 for s in repo.issue_signals.values() if s.interesting)
@@ -122,12 +137,34 @@ def create_app(
     @app.get("/ui", response_class=HTMLResponse)
     def dashboard() -> str:
         stats = _stats()
+        now_dt = datetime.now(timezone.utc)
+        today = now_dt.date()
         latest = repo.latest_daily_report()
+        report_markdown_for_ui = (
+            _remove_markdown_section(latest.markdown, "New/Updated PRs Today")
+            if latest
+            else ""
+        )
         latest_report_html = (
-            _report_markdown_to_html(latest.markdown)
+            _report_markdown_to_html(report_markdown_for_ui)
             if latest
             else "<h2>No Report Yet</h2><p>Run <code>POST /reports/daily/run</code> to generate one.</p>"
         )
+        new_updated_rows = []
+        new_updated_prs = sorted(
+            [pr for pr in repo.prs.values() if pr.updated_at.date() == today],
+            key=lambda p: p.updated_at,
+            reverse=True,
+        )[:20]
+        for pr in new_updated_prs:
+            new_updated_rows.append(
+                "<tr>"
+                f"<td><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a></td>"
+                f"<td>{escape(pr.title)}</td>"
+                f"<td>{escape(pr.updated_at.isoformat())}</td>"
+                f"<td><button class=\"action-btn\" onclick=\"runPrReview({pr.number}, this)\">Run Review</button></td>"
+                "</tr>"
+            )
 
         review_rows = []
         for signal in sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True)[:20]:
@@ -174,6 +211,23 @@ def create_app(
                 f"<p class=\"muted\">Provider: {escape(report.provider)} | Model: {escape(report.model)} | Recommendation: {escape(report.overall_recommendation)}</p>"
                 f"{''.join(findings_html) if findings_html else '<p>No findings.</p>'}"
                 "</details>"
+            )
+        with review_jobs_lock:
+            jobs_snapshot = list(review_jobs.values())
+        jobs_snapshot.sort(key=lambda j: j.get("created_at") or "", reverse=True)
+        job_rows = []
+        for job in jobs_snapshot[:20]:
+            status = str(job.get("status") or "unknown")
+            status_cls = "job-status-" + ("queued" if status == "queued" else "running" if status == "running" else "done")
+            job_rows.append(
+                "<tr>"
+                f"<td><code>{escape(str(job.get('job_id', '')))}</code></td>"
+                f"<td>#{escape(str(job.get('pr_number', '')))}</td>"
+                f"<td><span class=\"job-status {status_cls}\">{escape(status)}</span></td>"
+                f"<td>{escape(str(job.get('created_at', '')))}</td>"
+                f"<td>{escape(str(job.get('finished_at', '')) if job.get('finished_at') else '-')}</td>"
+                f"<td><a href=\"/reviews/jobs/{escape(str(job.get('job_id', '')))}\" target=\"_blank\" rel=\"noopener noreferrer\">JSON</a></td>"
+                "</tr>"
             )
 
         return f"""<!doctype html>
@@ -283,11 +337,61 @@ def create_app(
     .verdict.high {{ background: #ffeaea; border-color: #e5a2a2; }}
     .verdict.medium {{ background: #fff6e5; border-color: #e6c27a; }}
     .verdict.low {{ background: #eafaf0; border-color: #9fcdaf; }}
+    .job-status {{
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      border: 1px solid var(--line);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }}
+    .job-status-queued {{ background: #f2f4f7; border-color: #cfd6de; }}
+    .job-status-running {{ background: #e6f4ff; border-color: #98c9f0; }}
+    .job-status-done {{ background: #eafaf0; border-color: #9fcdaf; }}
+    .action-btn {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--accent2);
+      color: #fff;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }}
+    .action-btn[disabled] {{
+      opacity: 0.65;
+      cursor: default;
+    }}
     @media (max-width: 960px) {{
       .layout {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 28px; }}
     }}
   </style>
+  <script>
+    async function runPrReview(prNumber, btn) {{
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Queued...";
+      try {{
+        const res = await fetch(`/reviews/pr/${{prNumber}}/run`, {{ method: "POST" }});
+        const data = await res.json();
+        if (data.ok && data.accepted) {{
+          btn.textContent = "Queued";
+        }} else {{
+          btn.textContent = "Failed";
+          console.error("review enqueue failed", data);
+        }}
+      }} catch (e) {{
+        btn.textContent = "Failed";
+        console.error(e);
+      }} finally {{
+        setTimeout(() => {{
+          btn.disabled = false;
+          if (btn.textContent !== "Failed") btn.textContent = original;
+        }}, 2000);
+      }}
+    }}
+  </script>
 </head>
 <body>
   <div class="wrap">
@@ -315,6 +419,11 @@ def create_app(
         <h2>Latest Report</h2>
         <p class="muted">Date: {escape(stats["latest_report_date"] or "N/A")}</p>
         <div class="report">{latest_report_html}</div>
+        <h3 style="margin-top:14px;">New/Updated PRs Today</h3>
+        <table>
+          <thead><tr><th>PR</th><th>Title</th><th>Updated</th><th>Action</th></tr></thead>
+          <tbody>{''.join(new_updated_rows) if new_updated_rows else '<tr><td colspan="4">No PR updates observed today.</td></tr>'}</tbody>
+        </table>
       </article>
       <aside>
         <article class="card">
@@ -339,6 +448,14 @@ def create_app(
           </table>
           <h3 style="margin-top:14px;">Deep Review Details</h3>
           <div>{''.join(deep_review_details[:6]) if deep_review_details else '<p class="muted">No detailed findings yet.</p>'}</div>
+        </article>
+        <article class="card" style="margin-top: 14px;">
+          <h3>Review Jobs</h3>
+          <p class="muted">Shows recent async PR review jobs (queued/running/completed).</p>
+          <table>
+            <thead><tr><th>Job ID</th><th>PR</th><th>Status</th><th>Created</th><th>Finished</th><th>Details</th></tr></thead>
+            <tbody>{''.join(job_rows) if job_rows else '<tr><td colspan="6">No review jobs yet.</td></tr>'}</tbody>
+          </table>
         </article>
       </aside>
     </section>
