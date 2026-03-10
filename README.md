@@ -1,6 +1,6 @@
 # Polaris PR Intelligence (LangGraph + GitHub API)
 
-Minimal runnable skeleton for monitoring `apache/polaris` pull requests and issues.
+Python service for monitoring `apache/polaris` pull requests and issues, scoring review priority, and generating daily reports.
 
 ## Features
 - GitHub webhook ingestion (`pull_request`, `issues`, `issue_comment`, `pull_request_review`)
@@ -10,6 +10,7 @@ Minimal runnable skeleton for monitoring `apache/polaris` pull requests and issu
   - interesting-issue scoring
 - Daily report pipeline
 - FastAPI service endpoints
+- SQLite persistence by default (`STORE_BACKEND=sqlite`)
 
 ## Layout
 - `src/polaris_pr_intel/api` - FastAPI app
@@ -104,12 +105,17 @@ sequenceDiagram
 
 ## Run
 ```bash
-cd tools/pr-intel
+cd /Users/yufei/projects/my-town/pr-intel
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+export GITHUB_TOKEN=your_read_only_token
 polaris-pr-intel serve --host 0.0.0.0 --port 8080
 ```
+
+Open:
+- `http://127.0.0.1:8080/` (service overview)
+- `http://127.0.0.1:8080/docs` (interactive API)
 
 ## Required env vars
 - `GITHUB_TOKEN` - GitHub App installation token or PAT
@@ -121,11 +127,33 @@ polaris-pr-intel serve --host 0.0.0.0 --port 8080
 - `STORE_BACKEND` (default: `sqlite`) - `memory` or `sqlite`
 - `SQLITE_PATH` (default: `.data/polaris_pr_intel.db`) - used when `STORE_BACKEND=sqlite`
 
+## Optional scoring config
+- `REVIEW_NEEDED_THRESHOLD` (default: `2.0`)
+- `ISSUE_INTERESTING_THRESHOLD` (default: `2.0`)
+- `REVIEW_STALE_24H_POINTS` (default: `1.5`)
+- `REVIEW_STALE_72H_POINTS` (default: `1.5`)
+- `REVIEW_REQUESTED_POINTS` (default: `2.0`)
+- `REVIEW_LARGE_DIFF_POINTS` (default: `1.5`)
+- `REVIEW_MEDIUM_DIFF_POINTS` (default: `1.0`)
+- `REVIEW_MANY_FILES_POINTS` (default: `1.0`)
+
 ## API
+- `GET /`
 - `POST /webhooks/github`
 - `POST /reports/daily/run`
 - `POST /sync/recent`
+- `GET /stats`
 - `GET /reports/daily/latest`
+- `GET /reports/daily/latest.md`
+- `GET /reports/daily`
 - `GET /queues/needs-review`
 - `GET /queues/interesting-issues`
 - `GET /healthz`
+
+## Quick workflow
+1. Pull recent data from GitHub:
+   - `POST /sync/recent`
+2. Generate a report:
+   - `POST /reports/daily/run`
+3. View report:
+   - `GET /reports/daily/latest.md`
