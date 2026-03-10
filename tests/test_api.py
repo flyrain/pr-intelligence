@@ -18,18 +18,23 @@ class _DummyDailyGraph:
 
 
 class _DummyIngestor:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
     def sync_recent(self, per_page: int = 30, max_pages: int = 1, since: str | None = None) -> dict[str, int]:
+        self.calls.append({"per_page": per_page, "max_pages": max_pages, "since": since})
         return {"prs": per_page * max_pages, "issues": 1 if since else 0}
 
 
-def _client() -> tuple[TestClient, InMemoryRepository]:
+def _client() -> tuple[TestClient, InMemoryRepository, _DummyIngestor]:
     repo = InMemoryRepository()
-    app = create_app(repo, _DummyEventGraph(), _DummyDailyGraph(), snapshot_ingestor=_DummyIngestor())
-    return TestClient(app), repo
+    ingestor = _DummyIngestor()
+    app = create_app(repo, _DummyEventGraph(), _DummyDailyGraph(), snapshot_ingestor=ingestor)
+    return TestClient(app), repo, ingestor
 
 
 def test_github_webhook_deduplicates_delivery_id() -> None:
-    client, _ = _client()
+    client, _, _ = _client()
     payload = {
         "action": "opened",
         "pull_request": {
@@ -50,7 +55,7 @@ def test_github_webhook_deduplicates_delivery_id() -> None:
 
 
 def test_daily_report_list_supports_limit_and_offset() -> None:
-    client, repo = _client()
+    client, repo, _ = _client()
     repo.save_daily_report(DailyReport(date="2026-03-08", markdown="old"))
     repo.save_daily_report(DailyReport(date="2026-03-09", markdown="newer"))
     repo.save_daily_report(DailyReport(date="2026-03-10", markdown="newest"))
@@ -64,7 +69,7 @@ def test_daily_report_list_supports_limit_and_offset() -> None:
 
 
 def test_root_and_stats_endpoints_return_useful_summary() -> None:
-    client, repo = _client()
+    client, repo, _ = _client()
     repo.save_review_signal(ReviewSignal(pr_number=1, score=3.0, reasons=["reviewers-requested"], needs_review=True))
     repo.save_issue_signal(IssueSignal(issue_number=2, score=2.5, reasons=["label:bug"], interesting=True))
     repo.save_daily_report(DailyReport(date="2026-03-10", markdown="report"))
@@ -86,7 +91,7 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
 
 
 def test_latest_report_markdown_endpoint() -> None:
-    client, repo = _client()
+    client, repo, _ = _client()
     empty = client.get("/reports/daily/latest.md")
     assert empty.status_code == 200
     assert "No report has been generated yet." in empty.text
@@ -95,3 +100,34 @@ def test_latest_report_markdown_endpoint() -> None:
     filled = client.get("/reports/daily/latest.md")
     assert filled.status_code == 200
     assert filled.text == "# Report\n\nHello"
+
+
+def test_run_daily_report_refreshes_by_default() -> None:
+    client, _, ingestor = _client()
+    resp = client.post("/reports/daily/run")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["synced"]["prs"] == 2000
+    assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None}
+
+
+def test_sync_all_open_endpoint() -> None:
+    client, _, ingestor = _client()
+    resp = client.post("/sync/all-open", params={"per_page": 50, "max_pages": 3})
+    assert resp.status_code == 200
+    assert resp.json()["synced"]["prs"] == 150
+    assert ingestor.calls[0] == {"per_page": 50, "max_pages": 3, "since": None}
+
+
+def test_ui_endpoint_renders_dashboard() -> None:
+    client, repo, _ = _client()
+    repo.save_daily_report(DailyReport(date="2026-03-10", markdown="# Polaris PR Intelligence Report\n\n## PRs Needing Review"))
+
+    resp = client.get("/ui")
+
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Polaris PR Intelligence" in resp.text
+    assert "Latest Report" in resp.text
+    assert "PRs Needing Review" in resp.text

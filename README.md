@@ -115,6 +115,7 @@ polaris-pr-intel serve --host 0.0.0.0 --port 8080
 
 Open:
 - `http://127.0.0.1:8080/` (service overview)
+- `http://127.0.0.1:8080/ui` (dashboard UI)
 - `http://127.0.0.1:8080/docs` (interactive API)
 
 ## Required env vars
@@ -139,9 +140,11 @@ Open:
 
 ## API
 - `GET /`
+- `GET /ui`
 - `POST /webhooks/github`
 - `POST /reports/daily/run`
 - `POST /sync/recent`
+- `POST /sync/all-open`
 - `GET /stats`
 - `GET /reports/daily/latest`
 - `GET /reports/daily/latest.md`
@@ -152,8 +155,8 @@ Open:
 
 ## Quick workflow
 1. Pull recent data from GitHub:
-   - `POST /sync/recent`
+   - `POST /sync/all-open`
 2. Generate a report:
-   - `POST /reports/daily/run`
+   - `POST /reports/daily/run` (refreshes from GitHub by default)
 3. View report:
    - `GET /reports/daily/latest.md`
