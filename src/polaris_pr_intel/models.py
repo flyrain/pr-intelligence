@@ -28,6 +28,7 @@ class PullRequestSnapshot(BaseModel):
     changed_files: int = 0
     additions: int = 0
     deletions: int = 0
+    diff_text: str = ""
     html_url: str
     updated_at: datetime
 

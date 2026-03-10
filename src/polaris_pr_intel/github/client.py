@@ -30,9 +30,31 @@ class GitHubClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_pull_request(self, number: int) -> PullRequestSnapshot:
+    def get_pull_request(self, number: int, include_diff: bool = False) -> PullRequestSnapshot:
         data = self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")
-        return self._to_pr_snapshot(data)
+        pr = self._to_pr_snapshot(data)
+        if include_diff:
+            pr.diff_text = self.get_pull_request_diff(number)
+        return pr
+
+    def get_pull_request_diff(self, number: int, max_chars: int = 120_000) -> str:
+        """Fetch the combined patch for all files in a PR."""
+        files = self._get(
+            f"/repos/{self.owner}/{self.repo}/pulls/{number}/files",
+            params={"per_page": 100},
+        )
+        parts: list[str] = []
+        total = 0
+        for f in files:
+            patch = f.get("patch", "")
+            header = f"--- {f['filename']}\n"
+            chunk = header + patch + "\n"
+            if total + len(chunk) > max_chars:
+                parts.append(f"\n... diff truncated at {max_chars} chars ...")
+                break
+            parts.append(chunk)
+            total += len(chunk)
+        return "".join(parts)
 
     def list_recent_pull_requests(self, per_page: int = 30, page: int = 1) -> list[PullRequestSnapshot]:
         data = self._get(

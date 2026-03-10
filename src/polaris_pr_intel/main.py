@@ -35,7 +35,7 @@ def build_runtime():
     snapshot_ingestor = SnapshotIngestor(gh, repo)
     event_graph = EventGraph(repo, settings=settings)
     daily_graph = DailyReportGraph(repo)
-    pr_review_graph = PRReviewGraph(repo, reviewer=reviewer)
+    pr_review_graph = PRReviewGraph(repo, reviewer=reviewer, gh=gh)
     scheduler = DailyScheduler(daily_graph)
     app = create_app(
         repo,

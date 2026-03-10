@@ -5,14 +5,16 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from polaris_pr_intel.agents.pr_reviewer import PRSubagentReviewer
+from polaris_pr_intel.github.client import GitHubClient
 from polaris_pr_intel.graphs.state import PRIntelState
 from polaris_pr_intel.store.base import Repository
 
 
 class PRReviewGraph:
-    def __init__(self, repo: Repository, reviewer: PRSubagentReviewer) -> None:
+    def __init__(self, repo: Repository, reviewer: PRSubagentReviewer, gh: GitHubClient | None = None) -> None:
         self.repo = repo
         self.reviewer = reviewer
+        self.gh = gh
         self.graph = self._build()
 
     def _build(self):
@@ -36,6 +38,12 @@ class PRReviewGraph:
         pr = self.repo.prs.get(int(pr_number))
         if pr is None:
             return {"errors": [f"pr-not-found:{pr_number}"], "notifications": ["review-skipped"]}
+        # Fetch the actual diff so subagents can review real code.
+        if not pr.diff_text and self.gh is not None:
+            try:
+                pr.diff_text = self.gh.get_pull_request_diff(pr.number)
+            except Exception:
+                pass  # proceed with metadata-only review
         return {"pr": pr}
 
     def run_subagents(self, state: PRIntelState) -> dict[str, Any]:

@@ -93,37 +93,97 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
     provider: str = "claude_code_local"
     model: str = "claude-code-local"
     command: str = "claude"
-    timeout_sec: int = 45
+    timeout_sec: int = 300
+    max_turns: int = 15
+    repo_dir: str = ""
 
     @staticmethod
-    def _extract_json_blob(text: str) -> str:
-        cleaned = text.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.splitlines()
-            # Remove opening/closing fences if present.
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            cleaned = "\n".join(lines).strip()
-        return cleaned
+    def _extract_json_from_result(text: str) -> dict:
+        """Extract JSON finding from Claude's output.
+
+        With --output-format json, Claude returns a JSON object with a "result"
+        field containing the final text response.  We look for a JSON object
+        matching our schema inside that text.
+        """
+        # First try: the whole output is the --output-format json envelope.
+        try:
+            envelope = json.loads(text)
+            if isinstance(envelope, dict) and "result" in envelope:
+                text = envelope["result"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try to parse the (possibly extracted) text directly.
+        try:
+            obj = json.loads(text.strip())
+            if isinstance(obj, dict) and "verdict" in obj:
+                return obj
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Look for a JSON code block in the response.
+        import re
+        for match in re.finditer(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL):
+            try:
+                obj = json.loads(match.group(1).strip())
+                if isinstance(obj, dict) and "verdict" in obj:
+                    return obj
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # Last resort: find first { ... } blob that looks right.
+        brace_start = text.find("{")
+        if brace_start >= 0:
+            depth = 0
+            for i in range(brace_start, len(text)):
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            obj = json.loads(text[brace_start : i + 1])
+                            if isinstance(obj, dict) and "verdict" in obj:
+                                return obj
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        break
+
+        raise ValueError("No valid finding JSON found in Claude output")
 
     def _build_prompt(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> str:
-        return f"""You are a PR review subagent.
-Analyze this pull request for the given focus area and return ONLY JSON.
+        diff_section = ""
+        if pr.diff_text:
+            truncated_diff = pr.diff_text[:80_000]
+            if len(pr.diff_text) > 80_000:
+                truncated_diff += "\n... (diff truncated)"
+            diff_section = f"""
 
-Required JSON schema:
+Code diff (patch):
+```
+{truncated_diff}
+```
+"""
+        return f"""You are an expert code reviewer acting as a specialized PR review subagent.
+Your focus area is: {focus_area}
+
+Analyze the pull request below. You have access to tools — use them to read source files
+for additional context when the diff alone is not enough to assess the change. For example,
+read surrounding code to understand how changed functions are called, check test coverage,
+or verify that security patterns are applied consistently.
+
+After your analysis, respond with ONLY valid JSON matching this schema:
 {{
   "agent_name": "{agent_name}",
   "focus_area": "{focus_area}",
   "verdict": "low|medium|high",
   "score": 0.0-1.0,
-  "summary": "short summary",
-  "recommendations": ["item1", "item2"],
+  "summary": "2-3 sentence analysis with specific findings from the code",
+  "recommendations": ["specific actionable item referencing code"],
   "confidence": 0.0-1.0
 }}
 
-Pull request context:
+Pull request metadata:
 - number: {pr.number}
 - title: {pr.title}
 - author: {pr.author}
@@ -135,22 +195,31 @@ Pull request context:
 - deletions: {pr.deletions}
 - labels: {", ".join(pr.labels) if pr.labels else "(none)"}
 - requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
-- body:
+
+PR description:
 {pr.body[:4000]}
-"""
+{diff_section}"""
 
     def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_prompt(agent_name, focus_area, pr)
         try:
+            cmd = [
+                self.command,
+                "--dangerously-skip-permissions",
+                "--output-format", "json",
+                "--max-turns", str(self.max_turns),
+                "--allowedTools", "Read,Grep,Glob,Bash",
+                "-p", prompt,
+            ]
             proc = subprocess.run(
-                [self.command, "--print", prompt],
+                cmd,
                 check=True,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_sec,
+                cwd=self.repo_dir or None,
             )
-            blob = self._extract_json_blob(proc.stdout)
-            data = json.loads(blob)
+            data = self._extract_json_from_result(proc.stdout)
             data["agent_name"] = agent_name
             data["focus_area"] = focus_area
             finding = PRSubagentFinding.model_validate(data)
@@ -158,7 +227,6 @@ Pull request context:
             finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
             return finding
         except Exception:
-            # Fall back to deterministic behavior when local CLI is unavailable.
             fallback = super().analyze_pr(agent_name, focus_area, pr)
             fallback.summary = f"(fallback heuristic) {fallback.summary}"
             return fallback

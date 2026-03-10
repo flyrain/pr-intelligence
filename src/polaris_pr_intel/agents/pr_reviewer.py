@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from polaris_pr_intel.llm.base import LLMAdapter
@@ -23,7 +24,15 @@ class PRSubagentReviewer:
         ]
 
     def run(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
-        return [self.llm.analyze_pr(spec.agent_name, spec.focus_area, pr) for spec in self.specs]
+        findings: list[PRSubagentFinding] = []
+        with ThreadPoolExecutor(max_workers=len(self.specs)) as pool:
+            futures = {
+                pool.submit(self.llm.analyze_pr, spec.agent_name, spec.focus_area, pr): spec
+                for spec in self.specs
+            }
+            for future in as_completed(futures):
+                findings.append(future.result())
+        return findings
 
     def aggregate(self, pr: PullRequestSnapshot, findings: list[PRSubagentFinding]) -> PRReviewReport:
         if not findings:

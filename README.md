@@ -11,7 +11,7 @@ Python service for monitoring `apache/polaris` pull requests and issues, scoring
 - Daily report pipeline
 - FastAPI service endpoints
 - SQLite persistence by default (`STORE_BACKEND=sqlite`)
-- Provider-agnostic PR deep-review subagents (`heuristic`, `openai`, `gemini`, `anthropic`)
+- Provider-agnostic PR deep-review subagents (`heuristic`, `openai`, `gemini`, `anthropic`, `claude_code_local`)
 
 ## Layout
 - `src/polaris_pr_intel/api` - FastAPI app
@@ -20,6 +20,7 @@ Python service for monitoring `apache/polaris` pull requests and issues, scoring
 - `src/polaris_pr_intel/agents` - task agents
 - `src/polaris_pr_intel/ingest.py` - periodic GitHub snapshot ingestion
 - `src/polaris_pr_intel/scoring` - deterministic scoring
+- `src/polaris_pr_intel/llm` - provider-agnostic LLM adapter layer
 - `src/polaris_pr_intel/store` - repository layer
 - `src/polaris_pr_intel/publish` - report/notification sinks
 - `src/polaris_pr_intel/scheduler` - daily scheduler
@@ -58,7 +59,9 @@ flowchart LR
 - **API layer**: receives webhooks, exposes manual sync/report endpoints, and serves queue/report queries.
 - **EventGraph**: processes incoming PR/issue events and writes summaries/signals.
 - **DailyReportGraph**: builds and publishes daily markdown reports.
+- **PRReviewGraph**: runs LLM subagents (code-risk, test-impact, docs-quality, security-signal) and aggregates findings into a review report.
 - **GitHubClient**: reads PR/issue data from GitHub API.
+- **LLM adapters**: provider-agnostic interface for subagent analysis with heuristic fallback.
 - **Repository layer**: persists snapshots, signals, reports, and webhook idempotency keys.
 - **Scheduler**: triggers daily report runs automatically.
 
@@ -104,6 +107,29 @@ sequenceDiagram
     DG->>PUB: publish_daily_report
     DG-->>API: notifications
     API-->>S: 200 OK
+```
+
+### 3) PR deep review
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as FastAPI /reviews/pr/{n}/run
+    participant PRG as PRReviewGraph
+    participant LLM as LLM Subagents (x4)
+    participant RS as Repository
+
+    U->>API: POST /reviews/pr/123/run
+    API->>API: Create async job
+    API-->>U: 202 {job_id}
+    API->>PRG: invoke(pr_number)
+    PRG->>RS: load PR snapshot
+    PRG->>LLM: run code-risk, test-impact, docs-quality, security-signal (parallel)
+    LLM-->>PRG: PRSubagentFinding[]
+    PRG->>PRG: aggregate findings → overall recommendation
+    PRG->>RS: save PRReviewReport
+    U->>API: GET /reviews/jobs/{job_id}
+    API-->>U: {status, result}
 ```
 
 ## Run
@@ -210,15 +236,25 @@ curl "http://127.0.0.1:8080/reviews/pr/top?limit=20"
 - `GEMINI_API_KEY` (optional)
 - `ANTHROPIC_API_KEY` (optional)
 - `CLAUDE_CODE_CMD` (default: `claude`) - local Claude Code CLI command
-- `CLAUDE_CODE_TIMEOUT_SEC` (default: `45`) - timeout for each subagent call
+- `CLAUDE_CODE_TIMEOUT_SEC` (default: `300`) - timeout for each subagent call
+- `CLAUDE_CODE_MAX_TURNS` (default: `15`) - max agent turns per subagent review
+- `CLAUDE_CODE_REPO_DIR` (default: empty) - path to local repo checkout for file-level analysis
 
-Note: the adapter interface is provider-agnostic. The default now uses local Claude Code CLI. If CLI execution fails or output is invalid, the adapter falls back to deterministic heuristic output.
+Note: the adapter interface is provider-agnostic. The default uses local Claude Code CLI in **full agent mode** — Claude can read files, search code, and explore the repo for context beyond the diff. If CLI execution fails or output is invalid, the adapter falls back to deterministic heuristic output.
+
+You can add custom Claude Code skills (in `.claude/` within the repo) to specialize review behavior (e.g., project-specific security checks, test coverage rules).
+
+### Concurrency model
+
+- **Within a PR**: the 4 subagents (code-risk, test-impact, docs-quality, security-signal) run **in parallel** via threads, each spawning its own `claude` process.
+- **Across PRs**: reviews run **sequentially**. All subagents share the same read-only repo directory, so concurrent reads are safe, but running multiple PRs in parallel would spawn `4 × N` Claude processes which could hit rate limits or overwhelm the machine.
 
 Example local Claude Code setup:
 ```bash
 export LLM_PROVIDER=claude_code_local
 export LLM_MODEL=claude-code-local
 export CLAUDE_CODE_CMD=claude
+export CLAUDE_CODE_REPO_DIR=/path/to/apache/polaris
 ```
 
 ## API

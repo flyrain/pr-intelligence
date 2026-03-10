@@ -26,7 +26,9 @@ class Settings:
     gemini_api_key: str = ""
     anthropic_api_key: str = ""
     claude_code_cmd: str = "claude"
-    claude_code_timeout_sec: int = 45
+    claude_code_timeout_sec: int = 300
+    claude_code_max_turns: int = 15
+    claude_code_repo_dir: str = ""
 
 
 def _float_env(name: str, default: float) -> float:
@@ -75,5 +77,7 @@ def load_settings() -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         claude_code_cmd=os.getenv("CLAUDE_CODE_CMD", "claude"),
-        claude_code_timeout_sec=_int_env("CLAUDE_CODE_TIMEOUT_SEC", 45),
+        claude_code_timeout_sec=_int_env("CLAUDE_CODE_TIMEOUT_SEC", 300),
+        claude_code_max_turns=_int_env("CLAUDE_CODE_MAX_TURNS", 15),
+        claude_code_repo_dir=os.getenv("CLAUDE_CODE_REPO_DIR", ""),
     )
