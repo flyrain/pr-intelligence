@@ -134,12 +134,12 @@ sequenceDiagram
 
 ## Run
 ```bash
-cd /Users/yufei/projects/my-town/pr-intel
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+./run.sh install
 export GITHUB_TOKEN=your_read_only_token
-polaris-pr-intel serve --host 0.0.0.0 --port 8080
+export CLAUDE_CODE_REPO_DIR=/path/to/apache/polaris
+./run.sh serve
 ```
 
 Open:
@@ -149,38 +149,44 @@ Open:
 
 ## How to use
 
-### 1) Start service
+A `run.sh` helper script wraps common operations:
+
 ```bash
-export GITHUB_TOKEN=your_read_only_token
-export STORE_BACKEND=sqlite
-export SQLITE_PATH=.data/polaris_pr_intel.db
-polaris-pr-intel serve --host 0.0.0.0 --port 8080
+./run.sh serve                # start the API server
+./run.sh sync-all             # sync all open PRs/issues from GitHub
+./run.sh sync                 # sync recent PRs/issues
+./run.sh report               # generate and print daily report
+./run.sh review 123           # run async deep review for PR #123
+./run.sh review-sync 123      # run sync deep review (wait for result)
+./run.sh run-daily            # generate one daily report via CLI
+./run.sh install              # pip install -e .
 ```
 
-### 2) Sync Polaris open PRs/issues
+Override host/port via environment:
+```bash
+PORT=9090 ./run.sh serve
+```
+
+### curl examples
+
+The same operations via curl, for scripting or when the server is remote:
+
+Sync all open PRs/issues:
 ```bash
 curl -X POST "http://127.0.0.1:8080/sync/all-open?per_page=100&max_pages=20"
 ```
 
-### 3) Run deep PR subagent reviews
-Run one PR:
+Run async deep review (returns a `job_id`):
 ```bash
 curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run"
 ```
-This endpoint auto-fetches the PR from GitHub if it is not already in local storage.
-It runs asynchronously by default and returns a `job_id`.
 
 Check async job status:
 ```bash
 curl "http://127.0.0.1:8080/reviews/jobs/<job_id>"
 ```
 
-Or fetch latest job by PR number:
-```bash
-curl "http://127.0.0.1:8080/reviews/pr/123/job"
-```
-
-Force synchronous execution:
+Run sync deep review (wait for result):
 ```bash
 curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run?wait=true"
 ```
@@ -190,16 +196,12 @@ Run many open PRs:
 curl -X POST "http://127.0.0.1:8080/reviews/run-open?limit=50"
 ```
 
-### 4) Generate daily report (includes refresh by default)
+Generate daily report:
 ```bash
 curl -X POST "http://127.0.0.1:8080/reports/daily/run"
 ```
 
-### 5) View results
-Dashboard UI:
-- `http://127.0.0.1:8080/ui`
-
-Latest report:
+View latest report:
 ```bash
 curl "http://127.0.0.1:8080/reports/daily/latest.md"
 ```
