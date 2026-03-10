@@ -83,3 +83,23 @@ class QueueItem(BaseModel):
     score: float
     reasons: list[str]
     url: str
+
+
+class PRSubagentFinding(BaseModel):
+    agent_name: str
+    focus_area: str
+    verdict: Literal["low", "medium", "high"]
+    score: float
+    summary: str
+    recommendations: list[str] = Field(default_factory=list)
+    confidence: float = 0.6
+
+
+class PRReviewReport(BaseModel):
+    pr_number: int
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    provider: str
+    model: str
+    findings: list[PRSubagentFinding] = Field(default_factory=list)
+    overall_priority: float
+    overall_recommendation: str

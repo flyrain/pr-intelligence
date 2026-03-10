@@ -20,6 +20,13 @@ class Settings:
     review_many_files_points: float = 1.0
     store_backend: str = "sqlite"
     sqlite_path: str = ".data/polaris_pr_intel.db"
+    llm_provider: str = "claude_code_local"
+    llm_model: str = "claude-code-local"
+    openai_api_key: str = ""
+    gemini_api_key: str = ""
+    anthropic_api_key: str = ""
+    claude_code_cmd: str = "claude"
+    claude_code_timeout_sec: int = 45
 
 
 def _float_env(name: str, default: float) -> float:
@@ -30,6 +37,16 @@ def _float_env(name: str, default: float) -> float:
         return float(raw)
     except ValueError as exc:
         raise RuntimeError(f"{name} must be a float") from exc
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an int") from exc
 
 
 
@@ -52,4 +69,11 @@ def load_settings() -> Settings:
         review_many_files_points=_float_env("REVIEW_MANY_FILES_POINTS", 1.0),
         store_backend=os.getenv("STORE_BACKEND", "sqlite").lower(),
         sqlite_path=os.getenv("SQLITE_PATH", ".data/polaris_pr_intel.db"),
+        llm_provider=os.getenv("LLM_PROVIDER", "claude_code_local").lower(),
+        llm_model=os.getenv("LLM_MODEL", "claude-code-local"),
+        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        claude_code_cmd=os.getenv("CLAUDE_CODE_CMD", "claude"),
+        claude_code_timeout_sec=_int_env("CLAUDE_CODE_TIMEOUT_SEC", 45),
     )

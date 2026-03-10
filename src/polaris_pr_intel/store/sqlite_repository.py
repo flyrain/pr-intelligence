@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from polaris_pr_intel.models import DailyReport, IssueSignal, IssueSnapshot, PRSummary, PullRequestSnapshot, ReviewSignal
+from polaris_pr_intel.models import DailyReport, IssueSignal, IssueSnapshot, PRReviewReport, PRSummary, PullRequestSnapshot, ReviewSignal
 
 
 class SQLiteRepository:
@@ -44,6 +44,12 @@ class SQLiteRepository:
                     issue_number INTEGER PRIMARY KEY,
                     score REAL NOT NULL,
                     interesting INTEGER NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS pr_review_reports (
+                    pr_number INTEGER PRIMARY KEY,
+                    overall_priority REAL NOT NULL,
+                    generated_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS daily_reports (
@@ -101,6 +107,12 @@ class SQLiteRepository:
         with self._lock:
             rows = self._conn.execute("SELECT payload FROM daily_reports ORDER BY id ASC").fetchall()
         return [DailyReport.model_validate_json(row["payload"]) for row in rows]
+
+    @property
+    def pr_review_reports(self) -> dict[int, PRReviewReport]:
+        with self._lock:
+            rows = self._conn.execute("SELECT pr_number, payload FROM pr_review_reports").fetchall()
+        return {int(row["pr_number"]): PRReviewReport.model_validate_json(row["payload"]) for row in rows}
 
     @property
     def last_sync_at(self) -> datetime | None:
@@ -162,6 +174,16 @@ class SQLiteRepository:
                 (signal.issue_number, signal.score, int(signal.interesting), signal.model_dump_json()),
             )
 
+    def save_pr_review_report(self, report: PRReviewReport) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO pr_review_reports(pr_number, overall_priority, generated_at, payload) VALUES(?, ?, ?, ?)
+                ON CONFLICT(pr_number) DO UPDATE SET overall_priority = excluded.overall_priority, generated_at = excluded.generated_at, payload = excluded.payload
+                """,
+                (report.pr_number, report.overall_priority, report.generated_at.isoformat(), report.model_dump_json()),
+            )
+
     def save_daily_report(self, report: DailyReport) -> None:
         with self._lock, self._conn:
             self._conn.execute(
@@ -187,6 +209,26 @@ class SQLiteRepository:
                 (limit, offset),
             ).fetchall()
         return [DailyReport.model_validate_json(row["payload"]) for row in rows]
+
+    def latest_pr_review_report(self, pr_number: int) -> PRReviewReport | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM pr_review_reports WHERE pr_number = ? LIMIT 1",
+                (pr_number,),
+            ).fetchone()
+        if not row:
+            return None
+        return PRReviewReport.model_validate_json(row["payload"])
+
+    def top_pr_review_reports(self, limit: int = 20) -> list[PRReviewReport]:
+        if limit < 1:
+            limit = 1
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM pr_review_reports ORDER BY overall_priority DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [PRReviewReport.model_validate_json(row["payload"]) for row in rows]
 
     def has_processed_event(self, delivery_id: str) -> bool:
         with self._lock:

@@ -65,4 +65,17 @@ class DailyReporterAgent:
         else:
             lines.append("- No issue labels available.")
 
+        lines += ["", "## Deep PR Review Signals"]
+        review_reports = repo.top_pr_review_reports(limit=10)
+        if review_reports:
+            for report in review_reports:
+                pr = repo.prs.get(report.pr_number)
+                if not pr:
+                    continue
+                lines.append(
+                    f"- [#{pr.number}]({pr.html_url}) {pr.title} | priority={report.overall_priority:.2f} | {report.overall_recommendation}"
+                )
+        else:
+            lines.append("- No deep PR review reports yet.")
+
         return DailyReport(date=now, markdown="\n".join(lines))

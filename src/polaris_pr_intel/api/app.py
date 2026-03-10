@@ -3,13 +3,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import threading
+from datetime import datetime, timezone
 from html import escape
+from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
+from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
 from polaris_pr_intel.models import GitHubEvent, QueueItem
 from polaris_pr_intel.store.base import Repository
@@ -20,10 +24,13 @@ def create_app(
     repo: Repository,
     event_graph: EventGraph,
     daily_graph: DailyReportGraph,
+    pr_review_graph: PRReviewGraph,
     snapshot_ingestor: SnapshotIngestor,
     webhook_secret: str = "",
 ) -> FastAPI:
     app = FastAPI(title="Polaris PR Intelligence")
+    review_jobs: dict[str, dict] = {}
+    review_jobs_lock = threading.Lock()
 
     def _report_markdown_to_html(markdown: str) -> str:
         parts: list[str] = []
@@ -78,6 +85,7 @@ def create_app(
             "issues_tracked": len(repo.issues),
             "review_signals": len(repo.review_signals),
             "issue_signals": len(repo.issue_signals),
+            "deep_pr_reviews": len(repo.pr_review_reports),
             "needs_review_queue": needs_review_count,
             "interesting_issues_queue": interesting_issue_count,
             "daily_reports": len(repo.daily_reports),
@@ -94,6 +102,7 @@ def create_app(
             "next_steps": [
                 "POST /sync/all-open to pull open PRs/issues from GitHub",
                 "POST /reports/daily/run to refresh and generate a report",
+                "POST /reviews/pr/{number}/run to run subagent deep review",
                 "GET /queues/needs-review to see prioritized PRs",
                 "GET /queues/interesting-issues to see prioritized issues",
             ],
@@ -102,6 +111,7 @@ def create_app(
                 "health": "/healthz",
                 "stats": "/stats",
                 "latest_report": "/reports/daily/latest",
+                "pr_review_top": "/reviews/pr/top",
             },
         }
 
@@ -136,6 +146,34 @@ def create_app(
             issue_rows.append(
                 f"<tr><td><a href=\"{escape(issue.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{issue.number}</a></td>"
                 f"<td>{escape(issue.title)}</td><td>{signal.score:.1f}</td><td>{escape(', '.join(signal.reasons))}</td></tr>"
+            )
+        deep_review_rows = []
+        deep_review_details = []
+        for report in repo.top_pr_review_reports(limit=20):
+            pr = repo.prs.get(report.pr_number)
+            if not pr:
+                continue
+            deep_review_rows.append(
+                f"<tr><td><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a></td>"
+                f"<td>{escape(pr.title)}</td><td>{report.overall_priority:.2f}</td><td>{escape(report.provider)}</td></tr>"
+            )
+            findings_html = []
+            for finding in report.findings:
+                recs = "".join(f"<li>{escape(rec)}</li>" for rec in finding.recommendations)
+                findings_html.append(
+                    "<article class=\"finding\">"
+                    f"<div><strong>{escape(finding.agent_name)}</strong> · {escape(finding.focus_area)}</div>"
+                    f"<div class=\"finding-meta\"><span class=\"verdict {escape(finding.verdict)}\">{escape(finding.verdict.upper())}</span> score={finding.score:.2f} confidence={finding.confidence:.2f}</div>"
+                    f"<p>{escape(finding.summary)}</p>"
+                    f"<ul>{recs}</ul>"
+                    "</article>"
+                )
+            deep_review_details.append(
+                "<details class=\"review-detail\">"
+                f"<summary>PR #{pr.number} · priority={report.overall_priority:.2f} · {escape(pr.title)}</summary>"
+                f"<p class=\"muted\">Provider: {escape(report.provider)} | Model: {escape(report.model)} | Recommendation: {escape(report.overall_recommendation)}</p>"
+                f"{''.join(findings_html) if findings_html else '<p>No findings.</p>'}"
+                "</details>"
             )
 
         return f"""<!doctype html>
@@ -215,6 +253,36 @@ def create_app(
     .report h2 {{ font-size: 20px; }}
     .report ul {{ margin: 0 0 8px 20px; padding: 0; }}
     .report li {{ margin-bottom: 6px; }}
+    .review-detail {{
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfffd;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+    }}
+    .review-detail summary {{
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--accent2);
+    }}
+    .finding {{
+      margin-top: 10px;
+      border-top: 1px dashed var(--line);
+      padding-top: 10px;
+    }}
+    .finding-meta {{ color: var(--muted); font-size: 13px; margin: 4px 0; }}
+    .verdict {{
+      display: inline-block;
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 11px;
+      letter-spacing: .04em;
+      border: 1px solid var(--line);
+      margin-right: 6px;
+    }}
+    .verdict.high {{ background: #ffeaea; border-color: #e5a2a2; }}
+    .verdict.medium {{ background: #fff6e5; border-color: #e6c27a; }}
+    .verdict.low {{ background: #eafaf0; border-color: #9fcdaf; }}
     @media (max-width: 960px) {{
       .layout {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 28px; }}
@@ -239,6 +307,7 @@ def create_app(
       <article class="card"><div class="k">Issues Tracked</div><div class="v">{stats["issues_tracked"]}</div></article>
       <article class="card"><div class="k">Needs Review Queue</div><div class="v">{stats["needs_review_queue"]}</div></article>
       <article class="card"><div class="k">Interesting Issues Queue</div><div class="v">{stats["interesting_issues_queue"]}</div></article>
+      <article class="card"><div class="k">Deep PR Reviews</div><div class="v">{stats["deep_pr_reviews"]}</div></article>
     </section>
 
     <section class="layout">
@@ -261,6 +330,15 @@ def create_app(
             <thead><tr><th>Issue</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
             <tbody>{''.join(issue_rows) if issue_rows else '<tr><td colspan="4">No issues queued.</td></tr>'}</tbody>
           </table>
+        </article>
+        <article class="card" style="margin-top: 14px;">
+          <h3>Deep PR Reviews</h3>
+          <table>
+            <thead><tr><th>PR</th><th>Title</th><th>Priority</th><th>Provider</th></tr></thead>
+            <tbody>{''.join(deep_review_rows) if deep_review_rows else '<tr><td colspan="4">No deep reviews yet.</td></tr>'}</tbody>
+          </table>
+          <h3 style="margin-top:14px;">Deep Review Details</h3>
+          <div>{''.join(deep_review_details[:6]) if deep_review_details else '<p class="muted">No detailed findings yet.</p>'}</div>
         </article>
       </aside>
     </section>
@@ -316,6 +394,127 @@ def create_app(
     def sync_all_open(per_page: int = 100, max_pages: int = 20) -> dict:
         synced = snapshot_ingestor.sync_recent(per_page=per_page, max_pages=max_pages, since=None)
         return {"ok": True, "synced": synced}
+
+    @app.post("/reviews/pr/{pr_number}/run")
+    def run_pr_review(pr_number: int, wait: bool = False) -> dict:
+        def _execute() -> dict:
+            if pr_number not in repo.prs:
+                fetched = snapshot_ingestor.sync_pr(pr_number)
+                if not fetched:
+                    return {"ok": False, "errors": [f"pr-not-found:{pr_number}"], "report": None}
+            out = pr_review_graph.invoke(pr_number)
+            report = repo.latest_pr_review_report(pr_number)
+            return {
+                "ok": True,
+                "notifications": out.get("notifications", []),
+                "errors": out.get("errors", []),
+                "report": report.model_dump() if report else None,
+            }
+
+        if wait:
+            result = _execute()
+            result["mode"] = "sync"
+            return result
+
+        job_id = str(uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with review_jobs_lock:
+            review_jobs[job_id] = {
+                "job_id": job_id,
+                "pr_number": pr_number,
+                "status": "queued",
+                "created_at": now,
+                "started_at": None,
+                "finished_at": None,
+                "result": None,
+            }
+
+        def _run_job() -> None:
+            with review_jobs_lock:
+                job = review_jobs[job_id]
+                job["status"] = "running"
+                job["started_at"] = datetime.now(timezone.utc).isoformat()
+            try:
+                result = _execute()
+                status = "completed" if result.get("ok") else "failed"
+            except Exception as exc:  # defensive path to avoid untracked crashes
+                result = {"ok": False, "errors": [str(exc)], "report": None}
+                status = "failed"
+
+            with review_jobs_lock:
+                job = review_jobs[job_id]
+                job["status"] = status
+                job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                job["result"] = result
+
+        threading.Thread(target=_run_job, daemon=True).start()
+        return {
+            "ok": True,
+            "accepted": True,
+            "mode": "async",
+            "job_id": job_id,
+            "status": "queued",
+            "status_url": f"/reviews/jobs/{job_id}",
+        }
+
+    @app.get("/reviews/jobs/{job_id}")
+    def pr_review_job_status(job_id: str) -> dict:
+        with review_jobs_lock:
+            job = review_jobs.get(job_id)
+        if not job:
+            return {"ok": False, "error": "job-not-found"}
+        return {"ok": True, "job": job}
+
+    @app.get("/reviews/pr/{pr_number}/job")
+    def pr_review_latest_job_status(pr_number: int) -> dict:
+        with review_jobs_lock:
+            jobs = [j for j in review_jobs.values() if j.get("pr_number") == pr_number]
+        if not jobs:
+            return {"ok": False, "error": "job-not-found", "pr_number": pr_number}
+        latest = sorted(jobs, key=lambda j: j.get("created_at") or "", reverse=True)[0]
+        return {"ok": True, "job": latest}
+
+    @app.post("/reviews/pr/{pr_number}/run-sync")
+    def run_pr_review_sync(pr_number: int) -> dict:
+        # Alias for clients that prefer explicit synchronous semantics.
+        if pr_number not in repo.prs:
+            fetched = snapshot_ingestor.sync_pr(pr_number)
+            if not fetched:
+                return {"ok": False, "errors": [f"pr-not-found:{pr_number}"], "report": None}
+        out = pr_review_graph.invoke(pr_number)
+        report = repo.latest_pr_review_report(pr_number)
+        return {
+            "ok": True,
+            "mode": "sync",
+            "notifications": out.get("notifications", []),
+            "errors": out.get("errors", []),
+            "report": report.model_dump() if report else None,
+        }
+
+    @app.post("/reviews/run-open")
+    def run_open_pr_reviews(limit: int = 50) -> dict:
+        if limit < 1:
+            limit = 1
+        prs = sorted(repo.prs.values(), key=lambda p: p.updated_at, reverse=True)[:limit]
+        reviewed: list[int] = []
+        skipped: list[int] = []
+        for pr in prs:
+            out = pr_review_graph.invoke(pr.number)
+            if out.get("errors"):
+                skipped.append(pr.number)
+            else:
+                reviewed.append(pr.number)
+        return {"ok": True, "reviewed": reviewed, "skipped": skipped, "total": len(prs)}
+
+    @app.get("/reviews/pr/{pr_number}/latest")
+    def latest_pr_review(pr_number: int) -> dict:
+        report = repo.latest_pr_review_report(pr_number)
+        return {"ok": True, "report": report.model_dump() if report else None}
+
+    @app.get("/reviews/pr/top")
+    def top_pr_reviews(limit: int = 20) -> dict:
+        reports = [r.model_dump() for r in repo.top_pr_review_reports(limit=limit)]
+        return {"ok": True, "reports": reports}
 
     @app.get("/reports/daily/latest")
     def latest_report() -> dict:

@@ -30,3 +30,11 @@ class SnapshotIngestor:
 
         self.repo.last_sync_at = datetime.now(timezone.utc)
         return {"prs": total_prs, "issues": total_issues}
+
+    def sync_pr(self, pr_number: int) -> bool:
+        try:
+            pr = self.gh.get_pull_request(pr_number)
+        except Exception:
+            return False
+        self.repo.upsert_pr(pr)
+        return True

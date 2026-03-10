@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from polaris_pr_intel.models import DailyReport, IssueSignal, IssueSnapshot, PRSummary, PullRequestSnapshot, ReviewSignal
+from polaris_pr_intel.models import DailyReport, IssueSignal, IssueSnapshot, PRReviewReport, PRSummary, PullRequestSnapshot, ReviewSignal
 
 
 @dataclass
@@ -13,6 +13,7 @@ class InMemoryRepository:
     pr_summaries: dict[int, PRSummary] = field(default_factory=dict)
     review_signals: dict[int, ReviewSignal] = field(default_factory=dict)
     issue_signals: dict[int, IssueSignal] = field(default_factory=dict)
+    pr_review_reports: dict[int, PRReviewReport] = field(default_factory=dict)
     daily_reports: list[DailyReport] = field(default_factory=list)
     processed_events: set[str] = field(default_factory=set)
     last_sync_at: datetime | None = None
@@ -32,6 +33,9 @@ class InMemoryRepository:
     def save_issue_signal(self, signal: IssueSignal) -> None:
         self.issue_signals[signal.issue_number] = signal
 
+    def save_pr_review_report(self, report: PRReviewReport) -> None:
+        self.pr_review_reports[report.pr_number] = report
+
     def save_daily_report(self, report: DailyReport) -> None:
         self.daily_reports.append(report)
 
@@ -45,6 +49,15 @@ class InMemoryRepository:
             limit = 1
         reports = list(reversed(self.daily_reports))
         return reports[offset : offset + limit]
+
+    def latest_pr_review_report(self, pr_number: int) -> PRReviewReport | None:
+        return self.pr_review_reports.get(pr_number)
+
+    def top_pr_review_reports(self, limit: int = 20) -> list[PRReviewReport]:
+        if limit < 1:
+            limit = 1
+        reports = sorted(self.pr_review_reports.values(), key=lambda r: r.overall_priority, reverse=True)
+        return reports[:limit]
 
     def has_processed_event(self, delivery_id: str) -> bool:
         return delivery_id in self.processed_events
