@@ -30,17 +30,25 @@ class GitHubClient:
         resp.raise_for_status()
         return resp.json()
 
-    def list_recent_pull_requests(self, per_page: int = 30) -> list[PullRequestSnapshot]:
+    def get_pull_request(self, number: int) -> PullRequestSnapshot:
+        data = self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")
+        return self._to_pr_snapshot(data)
+
+    def list_recent_pull_requests(self, per_page: int = 30, page: int = 1) -> list[PullRequestSnapshot]:
         data = self._get(
             f"/repos/{self.owner}/{self.repo}/pulls",
-            params={"state": "open", "sort": "updated", "direction": "desc", "per_page": per_page},
+            params={"state": "open", "sort": "updated", "direction": "desc", "per_page": per_page, "page": page},
         )
-        return [self._to_pr_snapshot(pr) for pr in data]
+        # List payload omits several review/diff fields; hydrate via per-PR detail.
+        return [self.get_pull_request(pr["number"]) for pr in data]
 
-    def list_recent_issues(self, per_page: int = 30) -> list[IssueSnapshot]:
+    def list_recent_issues(self, per_page: int = 30, page: int = 1, since: str | None = None) -> list[IssueSnapshot]:
+        params: dict[str, Any] = {"state": "open", "sort": "updated", "direction": "desc", "per_page": per_page, "page": page}
+        if since:
+            params["since"] = since
         data = self._get(
             f"/repos/{self.owner}/{self.repo}/issues",
-            params={"state": "open", "sort": "updated", "direction": "desc", "per_page": per_page},
+            params=params,
         )
         issues = [i for i in data if "pull_request" not in i]
         return [self._to_issue_snapshot(issue) for issue in issues]

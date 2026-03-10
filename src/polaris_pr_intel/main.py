@@ -10,17 +10,27 @@ from polaris_pr_intel.github.client import GitHubClient
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
+from polaris_pr_intel.scheduler.daily import DailyScheduler
+from polaris_pr_intel.store.base import Repository
 from polaris_pr_intel.store.repository import InMemoryRepository
+from polaris_pr_intel.store.sqlite_repository import SQLiteRepository
 
+
+
+def _build_repository(store_backend: str, sqlite_path: str) -> Repository:
+    if store_backend == "sqlite":
+        return SQLiteRepository(sqlite_path)
+    return InMemoryRepository()
 
 
 def build_runtime():
     settings = load_settings()
-    repo = InMemoryRepository()
+    repo = _build_repository(settings.store_backend, settings.sqlite_path)
     gh = GitHubClient(settings.github_token, settings.github_owner, settings.github_repo)
     snapshot_ingestor = SnapshotIngestor(gh, repo)
-    event_graph = EventGraph(repo)
+    event_graph = EventGraph(repo, settings=settings)
     daily_graph = DailyReportGraph(repo)
+    scheduler = DailyScheduler(daily_graph)
     app = create_app(
         repo,
         event_graph,
@@ -28,6 +38,11 @@ def build_runtime():
         snapshot_ingestor=snapshot_ingestor,
         webhook_secret=settings.github_webhook_secret,
     )
+    app.add_event_handler("startup", scheduler.start)
+    app.add_event_handler("shutdown", scheduler.stop)
+    app.add_event_handler("shutdown", gh.close)
+    if isinstance(repo, SQLiteRepository):
+        app.add_event_handler("shutdown", repo.close)
     return app, daily_graph
 
 

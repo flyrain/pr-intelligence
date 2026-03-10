@@ -7,11 +7,11 @@ from langgraph.graph import END, StateGraph
 from polaris_pr_intel.agents.daily_reporter import DailyReporterAgent
 from polaris_pr_intel.graphs.state import PRIntelState
 from polaris_pr_intel.publish.console import ConsolePublisher
-from polaris_pr_intel.store.repository import InMemoryRepository
+from polaris_pr_intel.store.base import Repository
 
 
 class DailyReportGraph:
-    def __init__(self, repo: InMemoryRepository) -> None:
+    def __init__(self, repo: Repository) -> None:
         self.repo = repo
         self.reporter = DailyReporterAgent()
         self.publisher = ConsolePublisher()
@@ -38,4 +38,5 @@ class DailyReportGraph:
         return {"notifications": [f"daily-report:{report.date}"]}
 
     def invoke(self) -> PRIntelState:
-        return self.graph.invoke({})
+        # LangGraph requires at least one state key in the initial input.
+        return self.graph.invoke({"notifications": []})

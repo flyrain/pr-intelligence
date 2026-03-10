@@ -7,17 +7,18 @@ from langgraph.graph import END, StateGraph
 from polaris_pr_intel.agents.issue_insight import IssueInsightAgent
 from polaris_pr_intel.agents.pr_summarizer import PRSummarizerAgent
 from polaris_pr_intel.agents.review_need import ReviewNeedAgent
+from polaris_pr_intel.config import Settings
 from polaris_pr_intel.graphs.state import PRIntelState
 from polaris_pr_intel.models import GitHubEvent, IssueSnapshot, PullRequestSnapshot
-from polaris_pr_intel.store.repository import InMemoryRepository
+from polaris_pr_intel.store.base import Repository
 
 
 class EventGraph:
-    def __init__(self, repo: InMemoryRepository) -> None:
+    def __init__(self, repo: Repository, settings: Settings) -> None:
         self.repo = repo
         self.pr_summarizer = PRSummarizerAgent()
-        self.review_need = ReviewNeedAgent()
-        self.issue_insight = IssueInsightAgent()
+        self.review_need = ReviewNeedAgent(settings)
+        self.issue_insight = IssueInsightAgent(settings)
         self.graph = self._build()
 
     def _build(self):
@@ -43,7 +44,7 @@ class EventGraph:
         payload = event.payload
         notifications: list[str] = []
 
-        if event.event_type == "pull_request" and payload.get("pull_request"):
+        if event.event_type in {"pull_request", "pull_request_review"} and payload.get("pull_request"):
             pr = PullRequestSnapshot.model_validate(
                 {
                     "number": payload["pull_request"]["number"],
@@ -68,7 +69,9 @@ class EventGraph:
             notifications.append(f"ingested-pr:{pr.number}")
             return {"pr": pr, "notifications": notifications}
 
-        if event.event_type == "issues" and payload.get("issue"):
+        if event.event_type in {"issues", "issue_comment"} and payload.get("issue"):
+            if payload["issue"].get("pull_request"):
+                return {"notifications": ["ignored-pr-comment-event"]}
             issue = IssueSnapshot.model_validate(
                 {
                     "number": payload["issue"]["number"],

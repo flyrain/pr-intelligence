@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from polaris_pr_intel.config import Settings
 from polaris_pr_intel.models import IssueSnapshot, PullRequestSnapshot
 
 
 
-def score_review_need(pr: PullRequestSnapshot) -> tuple[float, list[str]]:
+def score_review_need(pr: PullRequestSnapshot, settings: Settings) -> tuple[float, list[str]]:
     score = 0.0
     reasons: list[str] = []
 
@@ -17,26 +18,26 @@ def score_review_need(pr: PullRequestSnapshot) -> tuple[float, list[str]]:
 
     age_hours = (datetime.now(timezone.utc) - pr.updated_at).total_seconds() / 3600
     if age_hours > 24:
-        score += 1.5
+        score += settings.review_stale_24h_points
         reasons.append("stale-over-24h")
     if age_hours > 72:
-        score += 1.5
+        score += settings.review_stale_72h_points
         reasons.append("stale-over-72h")
 
     if pr.requested_reviewers:
-        score += 2.0
+        score += settings.review_requested_points
         reasons.append("reviewers-requested")
 
     diff_size = pr.additions + pr.deletions
     if diff_size > 800:
-        score += 1.5
+        score += settings.review_large_diff_points
         reasons.append("large-diff")
     elif diff_size > 250:
-        score += 1.0
+        score += settings.review_medium_diff_points
         reasons.append("medium-diff")
 
     if pr.changed_files > 20:
-        score += 1.0
+        score += settings.review_many_files_points
         reasons.append("many-files")
 
     if not reasons:

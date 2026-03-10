@@ -10,6 +10,26 @@ class Settings:
     github_owner: str = "apache"
     github_repo: str = "polaris"
     github_webhook_secret: str = ""
+    review_needed_threshold: float = 2.0
+    issue_interesting_threshold: float = 2.0
+    review_stale_24h_points: float = 1.5
+    review_stale_72h_points: float = 1.5
+    review_requested_points: float = 2.0
+    review_large_diff_points: float = 1.5
+    review_medium_diff_points: float = 1.0
+    review_many_files_points: float = 1.0
+    store_backend: str = "sqlite"
+    sqlite_path: str = ".data/polaris_pr_intel.db"
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a float") from exc
 
 
 
@@ -22,4 +42,14 @@ def load_settings() -> Settings:
         github_owner=os.getenv("GITHUB_OWNER", "apache"),
         github_repo=os.getenv("GITHUB_REPO", "polaris"),
         github_webhook_secret=os.getenv("GITHUB_WEBHOOK_SECRET", ""),
+        review_needed_threshold=_float_env("REVIEW_NEEDED_THRESHOLD", 2.0),
+        issue_interesting_threshold=_float_env("ISSUE_INTERESTING_THRESHOLD", 2.0),
+        review_stale_24h_points=_float_env("REVIEW_STALE_24H_POINTS", 1.5),
+        review_stale_72h_points=_float_env("REVIEW_STALE_72H_POINTS", 1.5),
+        review_requested_points=_float_env("REVIEW_REQUESTED_POINTS", 2.0),
+        review_large_diff_points=_float_env("REVIEW_LARGE_DIFF_POINTS", 1.5),
+        review_medium_diff_points=_float_env("REVIEW_MEDIUM_DIFF_POINTS", 1.0),
+        review_many_files_points=_float_env("REVIEW_MANY_FILES_POINTS", 1.0),
+        store_backend=os.getenv("STORE_BACKEND", "sqlite").lower(),
+        sqlite_path=os.getenv("SQLITE_PATH", ".data/polaris_pr_intel.db"),
     )

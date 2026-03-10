@@ -59,6 +59,8 @@ class ReviewSignal(BaseModel):
     score: float
     reasons: list[str]
     needs_review: bool
+    rule_version: str = "v1"
+    evaluated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class IssueSignal(BaseModel):
@@ -66,6 +68,8 @@ class IssueSignal(BaseModel):
     score: float
     reasons: list[str]
     interesting: bool
+    rule_version: str = "v1"
+    evaluated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class DailyReport(BaseModel):
