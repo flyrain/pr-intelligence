@@ -240,7 +240,7 @@ curl "http://127.0.0.1:8080/reviews/pr/top?limit=20"
 - `CLAUDE_CODE_CMD` (default: `claude`) - local Claude Code CLI command
 - `CLAUDE_CODE_TIMEOUT_SEC` (default: `300`) - timeout for each subagent call
 - `CLAUDE_CODE_MAX_TURNS` (default: `15`) - max agent turns per subagent review
-- `CLAUDE_CODE_REPO_DIR` (default: empty) - path to local repo checkout for file-level analysis
+- `CLAUDE_CODE_REPO_DIR` (default: empty, required for `claude_code_local`) - path to local repo checkout for file-level analysis
 
 Note: the adapter interface is provider-agnostic. The default uses local Claude Code CLI in **full agent mode** — Claude can read files, search code, and explore the repo for context beyond the diff. If CLI execution fails or output is invalid, the adapter falls back to deterministic heuristic output.
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 from polaris_pr_intel.config import load_settings
 from polaris_pr_intel.llm.adapters import ClaudeCodeLocalAdapter
 from polaris_pr_intel.llm.factory import build_llm_adapter
@@ -68,8 +70,27 @@ def test_factory_builds_claude_code_local_adapter(monkeypatch) -> None:
     monkeypatch.setenv("LLM_MODEL", "claude-local")
     monkeypatch.setenv("CLAUDE_CODE_CMD", "claude")
     monkeypatch.setenv("CLAUDE_CODE_TIMEOUT_SEC", "30")
+    monkeypatch.setenv("CLAUDE_CODE_REPO_DIR", "/tmp")
 
     settings = load_settings()
     adapter = build_llm_adapter(settings)
     assert adapter.provider == "claude_code_local"
     assert adapter.model == "claude-local"
+
+
+def test_factory_fails_for_empty_repo_dir(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")
+    monkeypatch.setenv("CLAUDE_CODE_REPO_DIR", "   ")
+    settings = load_settings()
+    with pytest.raises(RuntimeError, match="must not be empty"):
+        build_llm_adapter(settings)
+
+
+def test_factory_fails_for_invalid_repo_dir(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")
+    monkeypatch.setenv("CLAUDE_CODE_REPO_DIR", "/path/that/does/not/exist")
+    settings = load_settings()
+    with pytest.raises(RuntimeError, match="is invalid"):
+        build_llm_adapter(settings)
