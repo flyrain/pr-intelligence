@@ -4,6 +4,18 @@ set -euo pipefail
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8080}"
 BASE="http://127.0.0.1:${PORT}"
+VENV_DIR="${VENV_DIR:-.venv}"
+PY_BIN="${VENV_DIR}/bin/python"
+PIP_BIN="${VENV_DIR}/bin/pip"
+CLI_BIN="${VENV_DIR}/bin/polaris-pr-intel"
+
+run_cli() {
+    if [[ -x "${CLI_BIN}" ]]; then
+        "${CLI_BIN}" "$@"
+    else
+        polaris-pr-intel "$@"
+    fi
+}
 
 usage() {
     cat <<EOF
@@ -17,20 +29,22 @@ Commands:
   report            Generate and print daily report
   review <PR>       Run async review for a PR
   review-sync <PR>  Run sync review for a PR (wait for result)
+  bootstrap         Create .venv and install package
   install           Install package in editable mode
 
 Environment:
   HOST   Server bind address (default: 0.0.0.0)
   PORT   Server port (default: 8080)
+  VENV_DIR  Virtual environment directory (default: .venv)
 EOF
 }
 
 case "${1:-}" in
     serve)
-        polaris-pr-intel serve --host "$HOST" --port "$PORT"
+        run_cli serve --host "$HOST" --port "$PORT"
         ;;
     run-daily)
-        polaris-pr-intel run-daily
+        run_cli run-daily
         ;;
     sync)
         curl -s -X POST "$BASE/sync/recent" | python -m json.tool
@@ -50,8 +64,18 @@ case "${1:-}" in
         [[ -z "${2:-}" ]] && echo "Usage: ./run.sh review-sync <PR_NUMBER>" && exit 1
         curl -s -X POST "$BASE/reviews/pr/$2/run?wait=true" | python -m json.tool
         ;;
+    bootstrap)
+        python -m venv "${VENV_DIR}"
+        "${PIP_BIN}" install -e .
+        echo "Bootstrapped environment in ${VENV_DIR}"
+        echo "Run server with: ${CLI_BIN} serve --host ${HOST} --port ${PORT}"
+        ;;
     install)
-        pip install -e .
+        if [[ ! -x "${PIP_BIN}" ]]; then
+            echo "Missing ${PIP_BIN}. Run './run.sh bootstrap' first."
+            exit 1
+        fi
+        "${PIP_BIN}" install -e .
         ;;
     *)
         usage
