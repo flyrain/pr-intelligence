@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 
@@ -122,7 +123,6 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
             pass
 
         # Look for a JSON code block in the response.
-        import re
         for match in re.finditer(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL):
             try:
                 obj = json.loads(match.group(1).strip())
@@ -220,6 +220,94 @@ PR description:
                 cwd=self.repo_dir or None,
             )
             data = self._extract_json_from_result(proc.stdout)
+            data["agent_name"] = agent_name
+            data["focus_area"] = focus_area
+            finding = PRSubagentFinding.model_validate(data)
+            finding.score = _clamp(finding.score, 0.0, 1.0)
+            finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+            return finding
+        except Exception:
+            fallback = super().analyze_pr(agent_name, focus_area, pr)
+            fallback.summary = f"(fallback heuristic) {fallback.summary}"
+            return fallback
+
+
+@dataclass
+class CodexLocalAdapter(HeuristicLLMAdapter):
+    provider: str = "codex_local"
+    model: str = "gpt-5-codex"
+    command: str = "codex"
+    timeout_sec: int = 300
+    max_turns: int = 15
+    repo_dir: str = ""
+
+    def _build_prompt(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> str:
+        diff_section = ""
+        if pr.diff_text:
+            truncated_diff = pr.diff_text[:80_000]
+            if len(pr.diff_text) > 80_000:
+                truncated_diff += "\n... (diff truncated)"
+            diff_section = f"""
+
+Code diff (patch):
+```
+{truncated_diff}
+```
+"""
+        return f"""You are an expert code reviewer acting as a specialized PR review subagent.
+Your focus area is: {focus_area}
+
+Analyze the pull request below with concrete, code-specific findings.
+You may inspect repository files for extra context if needed.
+
+Return ONLY valid JSON:
+{{
+  "agent_name": "{agent_name}",
+  "focus_area": "{focus_area}",
+  "verdict": "low|medium|high",
+  "score": 0.0-1.0,
+  "summary": "2-3 sentence analysis with specific findings from the code",
+  "recommendations": ["specific actionable item referencing code"],
+  "confidence": 0.0-1.0
+}}
+
+Pull request metadata:
+- number: {pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+PR description:
+{pr.body[:4000]}
+{diff_section}"""
+
+    def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
+        prompt = self._build_prompt(agent_name, focus_area, pr)
+        try:
+            cmd = [
+                self.command,
+                "exec",
+                "--json",
+                "--max-turns",
+                str(self.max_turns),
+                prompt,
+            ]
+            proc = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_sec,
+                cwd=self.repo_dir or None,
+            )
+            data = ClaudeCodeLocalAdapter._extract_json_from_result(proc.stdout)
             data["agent_name"] = agent_name
             data["focus_area"] = focus_area
             finding = PRSubagentFinding.model_validate(data)

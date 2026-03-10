@@ -28,7 +28,10 @@ class Settings:
     claude_code_cmd: str = "claude"
     claude_code_timeout_sec: int = 300
     claude_code_max_turns: int = 15
-    claude_code_repo_dir: str = ""
+    local_review_repo_dir: str = ""
+    codex_cmd: str = "codex"
+    codex_timeout_sec: int = 300
+    codex_max_turns: int = 15
 
 
 def _float_env(name: str, default: float) -> float:
@@ -79,5 +82,12 @@ def load_settings() -> Settings:
         claude_code_cmd=os.getenv("CLAUDE_CODE_CMD", "claude"),
         claude_code_timeout_sec=_int_env("CLAUDE_CODE_TIMEOUT_SEC", 300),
         claude_code_max_turns=_int_env("CLAUDE_CODE_MAX_TURNS", 15),
-        claude_code_repo_dir=os.getenv("CLAUDE_CODE_REPO_DIR", ""),
+        local_review_repo_dir=(
+            os.getenv("LOCAL_REVIEW_REPO_DIR", "").strip()
+            or os.getenv("CLAUDE_CODE_REPO_DIR", "").strip()
+            or os.getenv("CODEX_REPO_DIR", "").strip()
+        ),
+        codex_cmd=os.getenv("CODEX_CMD", "codex"),
+        codex_timeout_sec=_int_env("CODEX_TIMEOUT_SEC", 300),
+        codex_max_turns=_int_env("CODEX_MAX_TURNS", 15),
     )
