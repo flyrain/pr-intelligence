@@ -8,9 +8,24 @@ VENV_DIR="${VENV_DIR:-.venv}"
 PY_BIN="${VENV_DIR}/bin/python"
 PIP_BIN="${VENV_DIR}/bin/pip"
 CLI_BIN="${VENV_DIR}/bin/polaris-pr-intel"
+USE_UV="${USE_UV:-auto}"
+
+have_uv() {
+    command -v uv >/dev/null 2>&1
+}
+
+use_uv_runtime() {
+    case "${USE_UV}" in
+        1|true|yes|on) return 0 ;;
+        0|false|no|off) return 1 ;;
+        *) have_uv ;;
+    esac
+}
 
 run_cli() {
-    if [[ -x "${CLI_BIN}" ]]; then
+    if use_uv_runtime; then
+        uv run polaris-pr-intel "$@"
+    elif [[ -x "${CLI_BIN}" ]]; then
         "${CLI_BIN}" "$@"
     else
         polaris-pr-intel "$@"
@@ -29,13 +44,14 @@ Commands:
   report            Generate and print daily report
   review <PR>       Run async review for a PR
   review-sync <PR>  Run sync review for a PR (wait for result)
-  bootstrap         Create .venv and install package
-  install           Install package in editable mode
+  bootstrap         Install dependencies (uv if available, else .venv)
+  install           Install/sync project dependencies
 
 Environment:
   HOST   Server bind address (default: 0.0.0.0)
   PORT   Server port (default: 8080)
   VENV_DIR  Virtual environment directory (default: .venv)
+  USE_UV   auto|true|false (default: auto)
 EOF
 }
 
@@ -65,17 +81,27 @@ case "${1:-}" in
         curl -s -X POST "$BASE/reviews/pr/$2/run?wait=true" | python -m json.tool
         ;;
     bootstrap)
-        python -m venv "${VENV_DIR}"
-        "${PIP_BIN}" install -e .
-        echo "Bootstrapped environment in ${VENV_DIR}"
-        echo "Run server with: ${CLI_BIN} serve --host ${HOST} --port ${PORT}"
+        if use_uv_runtime; then
+            uv sync
+            echo "Bootstrapped environment with uv"
+            echo "Run server with: uv run polaris-pr-intel serve --host ${HOST} --port ${PORT}"
+        else
+            python -m venv "${VENV_DIR}"
+            "${PIP_BIN}" install -e .
+            echo "Bootstrapped environment in ${VENV_DIR}"
+            echo "Run server with: ${CLI_BIN} serve --host ${HOST} --port ${PORT}"
+        fi
         ;;
     install)
-        if [[ ! -x "${PIP_BIN}" ]]; then
-            echo "Missing ${PIP_BIN}. Run './run.sh bootstrap' first."
-            exit 1
+        if use_uv_runtime; then
+            uv sync
+        else
+            if [[ ! -x "${PIP_BIN}" ]]; then
+                echo "Missing ${PIP_BIN}. Run './run.sh bootstrap' first."
+                exit 1
+            fi
+            "${PIP_BIN}" install -e .
         fi
-        "${PIP_BIN}" install -e .
         ;;
     *)
         usage

@@ -13,6 +13,8 @@ export LOCAL_REVIEW_REPO_DIR=/path/to/apache/polaris
 ./run.sh serve
 ```
 
+`run.sh` now prefers `uv` automatically when installed, and falls back to `.venv` otherwise.
+
 Open:
 - `http://127.0.0.1:8080/ui` (dashboard)
 - `http://127.0.0.1:8080/docs` (API docs)
@@ -63,8 +65,8 @@ curl "http://127.0.0.1:8080/reports/daily/latest.md"
 ./run.sh review 123           # async deep review for PR 123
 ./run.sh review-sync 123      # sync deep review for PR 123
 ./run.sh run-daily            # run daily graph via CLI
-./run.sh bootstrap            # create .venv + install package
-./run.sh install              # pip install -e .
+./run.sh bootstrap            # install dependencies (uv if available, else .venv)
+./run.sh install              # sync/install dependencies
 ```
 
 Override host/port:
