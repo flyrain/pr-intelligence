@@ -22,7 +22,7 @@ class DailyReporterAgent:
                 key = label.lower()
                 issue_label_counts[key] = issue_label_counts.get(key, 0) + 1
 
-        lines = [f"# Polaris PR Intelligence Report ({now})", "", "## PRs Needing Review"]
+        lines = ["## PRs Needing Review"]
         if pr_signals:
             for s in pr_signals[:10]:
                 pr = repo.prs.get(s.pr_number)
@@ -42,13 +42,6 @@ class DailyReporterAgent:
         else:
             lines.append("- No issue signals captured yet.")
 
-        lines += ["", "## New/Updated PRs Today"]
-        if new_prs_today:
-            for pr in sorted(new_prs_today, key=lambda p: p.updated_at, reverse=True)[:10]:
-                lines.append(f"- [#{pr.number}]({pr.html_url}) {pr.title} | updated={pr.updated_at.isoformat()}")
-        else:
-            lines.append("- No PR updates observed today.")
-
         lines += ["", "## Aging Open PRs (72h+)"]
         if aging_prs:
             for pr in sorted(aging_prs, key=lambda p: p.updated_at)[:10]:
@@ -56,6 +49,13 @@ class DailyReporterAgent:
                 lines.append(f"- [#{pr.number}]({pr.html_url}) {pr.title} | age={age_hours}h")
         else:
             lines.append("- No aging open PRs above 72h.")
+
+        lines += ["", "## New/Updated PRs Today"]
+        if new_prs_today:
+            for pr in sorted(new_prs_today, key=lambda p: p.updated_at, reverse=True)[:10]:
+                lines.append(f"- [#{pr.number}]({pr.html_url}) {pr.title} | updated={pr.updated_at.isoformat()}")
+        else:
+            lines.append("- No PR updates observed today.")
 
         lines += ["", "## Issue Label Trends"]
         if issue_label_counts:

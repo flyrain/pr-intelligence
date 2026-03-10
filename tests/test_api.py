@@ -163,7 +163,7 @@ def test_ui_endpoint_renders_dashboard() -> None:
     repo.save_daily_report(
         DailyReport(
             date="2026-03-10",
-            markdown="# Polaris PR Intelligence Report\n\n## PRs Needing Review\n- none\n\n## New/Updated PRs Today\n- [#99](https://example.com/pr/99) UI wiring | updated=2026-03-10T00:00:00+00:00",
+            markdown="# Polaris PR Intelligence Report\n\n## PRs Needing Review\n- none\n\n## Aging Open PRs (72h+)\n- [#1](https://example.com/pr/1) old PR | age=100h\n\n## New/Updated PRs Today\n- [#99](https://example.com/pr/99) UI wiring | updated=2026-03-10T00:00:00+00:00",
         )
     )
     repo.upsert_pr(
@@ -196,9 +196,44 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "PRs Needing Review" in resp.text
     assert "Deep Review Details" in resp.text
     assert "Review Jobs" in resp.text
+    assert "Sync All Open PRs/Issues" in resp.text
     assert "New/Updated PRs Today" in resp.text
+    assert "Aging Open PRs (72h+)" in resp.text
     assert "Run Review" in resp.text
     assert resp.text.count("New/Updated PRs Today") == 1
+    assert resp.text.index("New/Updated PRs Today") < resp.text.index("Aging Open PRs (72h+)")
+
+
+def test_ui_new_updated_prs_folds_after_first_ten() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    for pr_number in range(100, 112):
+        repo.upsert_pr(
+            PullRequestSnapshot(
+                number=pr_number,
+                title=f"PR {pr_number}",
+                body="",
+                state="open",
+                draft=False,
+                author="alice",
+                labels=[],
+                requested_reviewers=[],
+                comments=0,
+                review_comments=0,
+                commits=1,
+                changed_files=1,
+                additions=3,
+                deletions=1,
+                html_url=f"https://example.com/pr/{pr_number}",
+                updated_at=now,
+            )
+        )
+
+    resp = client.get("/ui")
+
+    assert resp.status_code == 200
+    assert '<details class="folded-section">' in resp.text
+    assert "Show 2 more PRs" in resp.text
 
 
 def test_pr_review_endpoints() -> None:

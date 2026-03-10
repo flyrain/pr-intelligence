@@ -91,6 +91,17 @@ def create_app(
                 out.append(line)
         return "\n".join(out).strip()
 
+    def _remove_legacy_report_title(markdown: str) -> str:
+        lines = markdown.splitlines()
+        out: list[str] = []
+        removed = False
+        for line in lines:
+            if not removed and line.startswith("# Polaris PR Intelligence Report"):
+                removed = True
+                continue
+            out.append(line)
+        return "\n".join(out).strip()
+
     def _stats() -> dict:
         needs_review_count = sum(1 for s in repo.review_signals.values() if s.needs_review)
         interesting_issue_count = sum(1 for s in repo.issue_signals.values() if s.interesting)
@@ -141,7 +152,7 @@ def create_app(
         today = now_dt.date()
         latest = repo.latest_daily_report()
         report_markdown_for_ui = (
-            _remove_markdown_section(latest.markdown, "New/Updated PRs Today")
+            _remove_markdown_section(_remove_legacy_report_title(latest.markdown), "New/Updated PRs Today")
             if latest
             else ""
         )
@@ -165,6 +176,19 @@ def create_app(
                 f"<td><button class=\"action-btn\" onclick=\"runPrReview({pr.number}, this)\">Run Review</button></td>"
                 "</tr>"
             )
+        visible_new_updated_rows = new_updated_rows[:10]
+        folded_new_updated_rows = new_updated_rows[10:]
+        folded_new_updated_html = (
+            "<details class=\"folded-section\">"
+            f"<summary>Show {len(folded_new_updated_rows)} more PRs</summary>"
+            "<table>"
+            "<thead><tr><th>PR</th><th>Title</th><th>Updated</th><th>Action</th></tr></thead>"
+            f"<tbody>{''.join(folded_new_updated_rows)}</tbody>"
+            "</table>"
+            "</details>"
+            if folded_new_updated_rows
+            else ""
+        )
 
         review_rows = []
         for signal in sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True)[:20]:
@@ -278,8 +302,24 @@ def create_app(
       border-radius: 10px;
       text-decoration: none;
       font-weight: 600;
+      cursor: pointer;
     }}
     .btn.primary {{ background: var(--accent); color: white; border-color: var(--accent); }}
+    .btn.sync-btn {{
+      background: linear-gradient(135deg, #0f766e 0%, #166534 100%);
+      color: #fff;
+      border-color: #0f766e;
+      font-weight: 700;
+      box-shadow: 0 6px 16px rgba(15, 118, 110, 0.28);
+    }}
+    .btn.sync-btn:hover {{
+      filter: brightness(1.05);
+    }}
+    .btn.sync-btn:disabled {{
+      opacity: 0.75;
+      cursor: default;
+      box-shadow: none;
+    }}
     .grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -362,12 +402,50 @@ def create_app(
       opacity: 0.65;
       cursor: default;
     }}
+    .folded-section {{
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: #fbfffd;
+    }}
+    .folded-section > summary {{
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--accent2);
+      margin-bottom: 6px;
+    }}
     @media (max-width: 960px) {{
       .layout {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 28px; }}
     }}
   </style>
   <script>
+    async function syncAllOpen(btn) {{
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Syncing...";
+      try {{
+        const res = await fetch("/sync/all-open?per_page=100&max_pages=20", {{ method: "POST" }});
+        const data = await res.json();
+        if (data.ok) {{
+          btn.textContent = "Synced";
+          setTimeout(() => window.location.reload(), 600);
+        }} else {{
+          btn.textContent = "Failed";
+          console.error("sync all-open failed", data);
+        }}
+      }} catch (e) {{
+        btn.textContent = "Failed";
+        console.error(e);
+      }} finally {{
+        setTimeout(() => {{
+          btn.disabled = false;
+          if (btn.textContent !== "Failed") btn.textContent = original;
+        }}, 2000);
+      }}
+    }}
+
     async function runPrReview(prNumber, btn) {{
       const original = btn.textContent;
       btn.disabled = true;
@@ -400,6 +478,7 @@ def create_app(
       <p class="muted">Daily PR/issue triage dashboard for apache/polaris.</p>
       <div class="actions">
         <a class="btn primary" href="/docs">Open API Docs</a>
+        <button class="btn sync-btn" type="button" onclick="syncAllOpen(this)">Sync All Open PRs/Issues</button>
         <a class="btn" href="/reports/daily/latest.md">Latest Report Markdown</a>
         <a class="btn" href="/queues/needs-review">Needs Review JSON</a>
         <a class="btn" href="/queues/interesting-issues">Interesting Issues JSON</a>
@@ -418,12 +497,13 @@ def create_app(
       <article class="card">
         <h2>Latest Report</h2>
         <p class="muted">Date: {escape(stats["latest_report_date"] or "N/A")}</p>
-        <div class="report">{latest_report_html}</div>
         <h3 style="margin-top:14px;">New/Updated PRs Today</h3>
         <table>
           <thead><tr><th>PR</th><th>Title</th><th>Updated</th><th>Action</th></tr></thead>
-          <tbody>{''.join(new_updated_rows) if new_updated_rows else '<tr><td colspan="4">No PR updates observed today.</td></tr>'}</tbody>
+          <tbody>{''.join(visible_new_updated_rows) if new_updated_rows else '<tr><td colspan="4">No PR updates observed today.</td></tr>'}</tbody>
         </table>
+        {folded_new_updated_html}
+        <div class="report">{latest_report_html}</div>
       </article>
       <aside>
         <article class="card">
