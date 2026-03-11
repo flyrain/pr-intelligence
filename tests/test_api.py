@@ -372,6 +372,8 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Deep Review Details" in resp.text
     assert "Review Jobs" in resp.text
     assert "Sync All Open PRs/Issues" in resp.text
+    assert '<details class="queue-section">' in resp.text
+    assert '<details class="queue-section" open>' not in resp.text
     assert "New/Updated PRs Today" in resp.text
     assert "Aging Open PRs (72h+)" in resp.text
     assert "Review" in resp.text

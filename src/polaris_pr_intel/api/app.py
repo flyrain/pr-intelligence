@@ -498,6 +498,17 @@ def create_app(
       color: var(--accent2);
       margin-bottom: 6px;
     }}
+    .queue-section > summary {{
+      cursor: pointer;
+      font-family: "IBM Plex Serif", Georgia, serif;
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 8px;
+    }}
+    .queue-section[open] > summary {{
+      margin-bottom: 10px;
+    }}
     @media (max-width: 960px) {{
       .layout {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 28px; }}
@@ -590,19 +601,23 @@ def create_app(
       </article>
       <aside>
         <article class="card">
-          <h3>PRs Needing Review</h3>
-          <table>
-            <thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
-            <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="4">No PRs queued.</td></tr>'}</tbody>
-          </table>
-          {folded_review_html}
+          <details class="queue-section">
+            <summary>PRs Needing Review ({stats["needs_review_queue"]})</summary>
+            <table>
+              <thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
+              <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="4">No PRs queued.</td></tr>'}</tbody>
+            </table>
+            {folded_review_html}
+          </details>
         </article>
         <article class="card" style="margin-top: 14px;">
-          <h3>Interesting Issues</h3>
-          <table>
-            <thead><tr><th>Issue</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
-            <tbody>{''.join(issue_rows) if issue_rows else '<tr><td colspan="4">No issues queued.</td></tr>'}</tbody>
-          </table>
+          <details class="queue-section">
+            <summary>Interesting Issues ({stats["interesting_issues_queue"]})</summary>
+            <table>
+              <thead><tr><th>Issue</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
+              <tbody>{''.join(issue_rows) if issue_rows else '<tr><td colspan="4">No issues queued.</td></tr>'}</tbody>
+            </table>
+          </details>
         </article>
         <article class="card" style="margin-top: 14px;">
           <h3>Deep PR Reviews</h3>
