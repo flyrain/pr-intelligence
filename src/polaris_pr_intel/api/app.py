@@ -148,8 +148,9 @@ def create_app(
     @app.get("/ui", response_class=HTMLResponse)
     def dashboard() -> str:
         stats = _stats()
-        now_dt = datetime.now(timezone.utc)
-        today = now_dt.date()
+        local_now = datetime.now().astimezone()
+        local_today = local_now.date()
+        local_tz = local_now.tzinfo
         latest = repo.latest_daily_report()
         report_markdown_for_ui = (
             _remove_markdown_section(_remove_legacy_report_title(latest.markdown), "New/Updated PRs Today")
@@ -162,8 +163,14 @@ def create_app(
             else "<h2>No Report Yet</h2><p>Run <code>POST /reports/daily/run</code> to generate one.</p>"
         )
         new_updated_rows = []
+        def _is_updated_today_local(updated_at: datetime) -> bool:
+            dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+            if local_tz is None:
+                return dt.date() == local_today
+            return dt.astimezone(local_tz).date() == local_today
+
         new_updated_prs = sorted(
-            [pr for pr in repo.prs.values() if pr.updated_at.date() == today],
+            [pr for pr in repo.prs.values() if _is_updated_today_local(pr.updated_at)],
             key=lambda p: p.updated_at,
             reverse=True,
         )[:20]

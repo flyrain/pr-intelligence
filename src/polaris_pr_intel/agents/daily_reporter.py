@@ -9,12 +9,20 @@ from polaris_pr_intel.store.base import Repository
 class DailyReporterAgent:
     def run(self, repo: Repository) -> DailyReport:
         now_dt = datetime.now(timezone.utc)
-        today = now_dt.date()
+        local_now = datetime.now().astimezone()
+        local_tz = local_now.tzinfo
+        today = local_now.date()
         now = now_dt.strftime("%Y-%m-%d")
 
         pr_signals = sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True)
         issue_signals = sorted(repo.issue_signals.values(), key=lambda s: s.score, reverse=True)
-        new_prs_today = [pr for pr in repo.prs.values() if pr.updated_at.date() == today]
+        def _is_updated_today_local(updated_at: datetime) -> bool:
+            dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+            if local_tz is None:
+                return dt.date() == today
+            return dt.astimezone(local_tz).date() == today
+
+        new_prs_today = [pr for pr in repo.prs.values() if _is_updated_today_local(pr.updated_at)]
         aging_prs = [pr for pr in repo.prs.values() if (now_dt - pr.updated_at).total_seconds() / 3600 >= 72 and pr.state == "open"]
         issue_label_counts: dict[str, int] = {}
         for issue in repo.issues.values():
