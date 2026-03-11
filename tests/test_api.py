@@ -567,6 +567,7 @@ def test_pr_review_async_job_mode() -> None:
     body = run.json()
     assert body["ok"] is True
     assert body["accepted"] is True
+    assert body["deduplicated"] is False
     assert body["mode"] == "async"
     job_id = body["job_id"]
 
@@ -594,6 +595,64 @@ def test_pr_review_async_job_mode() -> None:
     assert ui.status_code == 200
     assert "Review Jobs" in ui.text
     assert job_id in ui.text
+
+
+def test_pr_review_async_deduplicates_same_pr_when_job_inflight(monkeypatch) -> None:
+    monkeypatch.setenv("REVIEW_JOB_WORKERS", "1")
+    client, _, _, pr_review_graph = _client()
+
+    def _slow_invoke(pr_number: int) -> dict:
+        time.sleep(0.2)
+        return {"notifications": [f"pr-review:{pr_number}"], "errors": []}
+
+    pr_review_graph.invoke = _slow_invoke  # type: ignore[method-assign]
+    first = client.post("/reviews/pr/777/run")
+    second = client.post("/reviews/pr/777/run")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_body = first.json()
+    second_body = second.json()
+    assert first_body["deduplicated"] is False
+    assert second_body["deduplicated"] is True
+    assert second_body["job_id"] == first_body["job_id"]
+
+
+def test_pr_review_async_different_prs_get_distinct_jobs() -> None:
+    client, _, _, _ = _client()
+    first = client.post("/reviews/pr/881/run")
+    second = client.post("/reviews/pr/882/run")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["job_id"] != second.json()["job_id"]
+
+
+def test_pr_review_async_jobs_queue_with_single_worker(monkeypatch) -> None:
+    monkeypatch.setenv("REVIEW_JOB_WORKERS", "1")
+    client, _, _, pr_review_graph = _client()
+
+    def _slow_invoke(pr_number: int) -> dict:
+        time.sleep(0.15)
+        return {"notifications": [f"pr-review:{pr_number}"], "errors": []}
+
+    pr_review_graph.invoke = _slow_invoke  # type: ignore[method-assign]
+    first = client.post("/reviews/pr/701/run")
+    second = client.post("/reviews/pr/702/run")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_id = first.json()["job_id"]
+    second_id = second.json()["job_id"]
+
+    # With one worker, second job should remain queued while first is running.
+    seen = set()
+    for _ in range(30):
+        first_status = client.get(f"/reviews/jobs/{first_id}").json()["job"]["status"]
+        second_status = client.get(f"/reviews/jobs/{second_id}").json()["job"]["status"]
+        seen.add((first_status, second_status))
+        if (first_status, second_status) in {("running", "queued"), ("completed", "running")}:
+            break
+        time.sleep(0.01)
+
+    assert ("running", "queued") in seen or ("completed", "running") in seen
 
 
 def test_pr_review_job_auto_expires_stuck_running(monkeypatch) -> None:

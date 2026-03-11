@@ -115,6 +115,7 @@ PORT=9090 ./run.sh serve
 - `GITHUB_WEBHOOK_SECRET` (optional)
 - `STORE_BACKEND` (default: `sqlite`)
 - `SQLITE_PATH` (default: `.data/polaris_pr_intel.db`)
+- `REVIEW_JOB_WORKERS` (default: `1`; async PR review worker count, higher values increase concurrency)
 
 ### LLM provider selection
 - `LLM_PROVIDER` (default: `claude_code_local`)
@@ -161,6 +162,87 @@ PORT=9090 ./run.sh serve
 - Adapter layer is provider-agnostic.
 - Local providers (`claude_code_local`, `codex_local`) use your local repo path for code-aware analysis.
 - If CLI execution fails or output parsing fails, adapters fall back to deterministic heuristic output.
+- Async review jobs are queued in-memory.
+- Repeated async requests for the same PR while a job is `queued`/`running` are deduplicated and return the existing `job_id` (`deduplicated: true`).
+
+### Async Review Queue (Detailed)
+
+![PR review queue architecture](docs/review-queue-diagram.png)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User / UI
+    participant API as FastAPI (/reviews/pr/{pr}/run)
+    participant JM as Job Map (in-memory)
+    participant Q as Job Queue (in-memory)
+    participant W as Worker (REVIEW_JOB_WORKERS)
+    participant G as PRReviewGraph
+    participant S as Store (SQLite/InMemory)
+
+    U->>API: POST run (wait=false, pr=3960)
+    API->>JM: Check existing queued/running for PR 3960
+    alt Existing inflight job
+        API-->>U: 200 accepted, deduplicated=true, existing job_id
+    else No inflight job
+        API->>JM: Create job status=queued
+        API->>Q: Enqueue job_id
+        API-->>U: 200 accepted, deduplicated=false, new job_id
+    end
+
+    W->>Q: Dequeue next job_id
+    W->>JM: status=running, started_at=now
+    W->>G: invoke(pr_number)
+    G->>S: load PR, run subagents, aggregate, persist report
+    alt Success
+        W->>JM: status=completed, finished_at, result.ok=true
+    else Failure
+        W->>JM: status=failed, finished_at, result.ok=false
+    end
+
+    U->>API: GET /reviews/jobs/{job_id}
+    API->>JM: Read job record
+    API-->>U: status + result
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued: job created
+    queued --> running: worker dequeues job
+    running --> completed: graph succeeds
+    running --> failed: graph error / timeout
+    queued --> failed: invalid job canceled (defensive path)
+```
+
+```mermaid
+flowchart LR
+    subgraph Ingress["Incoming async review requests"]
+      A["PR 101 request"]
+      B["PR 102 request"]
+      C["PR 101 request again"]
+      D["PR 103 request"]
+    end
+
+    A --> M
+    B --> M
+    C --> M
+    D --> M
+
+    M{"Deduplicate\nsame PR queued/running?"}
+    M -->|yes| X["Return existing job_id\n(no new queue entry)"]
+    M -->|no| Q["FIFO queue"]
+
+    Q --> W1["Worker 1"]
+    Q --> W2["Worker 2"]
+    Q --> W3["Worker N"]
+
+    W1 --> R1["Run PRReviewGraph(PR 101)"]
+    W2 --> R2["Run PRReviewGraph(PR 102)"]
+    W3 --> R3["Run PRReviewGraph(PR 103)"]
+
+    note1["With N>1 workers, jobs are dequeued FIFO,\nbut completion order depends on runtime duration."]
+    Q -.-> note1
+```
 
 ## Architecture (Reference)
 

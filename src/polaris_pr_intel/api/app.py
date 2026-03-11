@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import queue as queue_module
 import threading
 from datetime import datetime, timezone
 from html import escape
@@ -35,6 +36,8 @@ def create_app(
     app = FastAPI(title="Polaris PR Intelligence")
     review_jobs: dict[str, dict] = {}
     review_jobs_lock = threading.Lock()
+    review_job_queue: queue_module.Queue[str] = queue_module.Queue()
+    review_job_workers = max(1, int(os.getenv("REVIEW_JOB_WORKERS", "1")))
     review_job_timeout_sec = int(os.getenv("REVIEW_JOB_TIMEOUT_SEC", "1200"))
     review_target_login = (
         os.getenv("REVIEW_TARGET_LOGIN", "").strip().lower()
@@ -165,6 +168,49 @@ def create_app(
         if recompute:
             resp["scored"] = _recompute_scores(open_only=True)
         return resp
+
+    def _execute_review(pr_number: int) -> dict:
+        if pr_number not in repo.prs:
+            fetched = snapshot_ingestor.sync_pr(pr_number)
+            if not fetched:
+                return {"ok": False, "errors": [f"pr-not-found:{pr_number}"], "report": None}
+        out = pr_review_graph.invoke(pr_number)
+        report = repo.latest_pr_review_report(pr_number)
+        return {
+            "ok": True,
+            "notifications": out.get("notifications", []),
+            "errors": out.get("errors", []),
+            "report": report.model_dump() if report else None,
+        }
+
+    def _review_worker_loop() -> None:
+        while True:
+            job_id = review_job_queue.get()
+            with review_jobs_lock:
+                job = review_jobs.get(job_id)
+                if not job:
+                    review_job_queue.task_done()
+                    continue
+                job["status"] = "running"
+                job["started_at"] = datetime.now(timezone.utc).isoformat()
+                pr_number = int(job["pr_number"])
+            try:
+                result = _execute_review(pr_number)
+                status = "completed" if result.get("ok") else "failed"
+            except Exception as exc:  # defensive path to avoid untracked crashes
+                result = {"ok": False, "errors": [str(exc)], "report": None}
+                status = "failed"
+
+            with review_jobs_lock:
+                job = review_jobs.get(job_id)
+                if job:
+                    job["status"] = status
+                    job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                    job["result"] = result
+            review_job_queue.task_done()
+
+    for _ in range(review_job_workers):
+        threading.Thread(target=_review_worker_loop, daemon=True).start()
 
     def _stats() -> dict:
         needs_review_count = 0
@@ -766,28 +812,32 @@ def create_app(
 
     @app.post("/reviews/pr/{pr_number}/run")
     def run_pr_review(pr_number: int, wait: bool = False) -> dict:
-        def _execute() -> dict:
-            if pr_number not in repo.prs:
-                fetched = snapshot_ingestor.sync_pr(pr_number)
-                if not fetched:
-                    return {"ok": False, "errors": [f"pr-not-found:{pr_number}"], "report": None}
-            out = pr_review_graph.invoke(pr_number)
-            report = repo.latest_pr_review_report(pr_number)
-            return {
-                "ok": True,
-                "notifications": out.get("notifications", []),
-                "errors": out.get("errors", []),
-                "report": report.model_dump() if report else None,
-            }
-
         if wait:
-            result = _execute()
+            result = _execute_review(pr_number)
             result["mode"] = "sync"
             return result
 
-        job_id = str(uuid4())
-        now = datetime.now(timezone.utc).isoformat()
         with review_jobs_lock:
+            existing = [
+                j
+                for j in review_jobs.values()
+                if int(j.get("pr_number", -1)) == pr_number and j.get("status") in {"queued", "running"}
+            ]
+            if existing:
+                latest_existing = sorted(existing, key=lambda j: j.get("created_at") or "", reverse=True)[0]
+                existing_job_id = str(latest_existing["job_id"])
+                return {
+                    "ok": True,
+                    "accepted": True,
+                    "deduplicated": True,
+                    "mode": "async",
+                    "job_id": existing_job_id,
+                    "status": str(latest_existing.get("status") or "queued"),
+                    "status_url": f"/reviews/jobs/{existing_job_id}",
+                }
+
+            job_id = str(uuid4())
+            now = datetime.now(timezone.utc).isoformat()
             review_jobs[job_id] = {
                 "job_id": job_id,
                 "pr_number": pr_number,
@@ -798,28 +848,11 @@ def create_app(
                 "result": None,
             }
 
-        def _run_job() -> None:
-            with review_jobs_lock:
-                job = review_jobs[job_id]
-                job["status"] = "running"
-                job["started_at"] = datetime.now(timezone.utc).isoformat()
-            try:
-                result = _execute()
-                status = "completed" if result.get("ok") else "failed"
-            except Exception as exc:  # defensive path to avoid untracked crashes
-                result = {"ok": False, "errors": [str(exc)], "report": None}
-                status = "failed"
-
-            with review_jobs_lock:
-                job = review_jobs[job_id]
-                job["status"] = status
-                job["finished_at"] = datetime.now(timezone.utc).isoformat()
-                job["result"] = result
-
-        threading.Thread(target=_run_job, daemon=True).start()
+        review_job_queue.put(job_id)
         return {
             "ok": True,
             "accepted": True,
+            "deduplicated": False,
             "mode": "async",
             "job_id": job_id,
             "status": "queued",
@@ -848,19 +881,9 @@ def create_app(
     @app.post("/reviews/pr/{pr_number}/run-sync")
     def run_pr_review_sync(pr_number: int) -> dict:
         # Alias for clients that prefer explicit synchronous semantics.
-        if pr_number not in repo.prs:
-            fetched = snapshot_ingestor.sync_pr(pr_number)
-            if not fetched:
-                return {"ok": False, "errors": [f"pr-not-found:{pr_number}"], "report": None}
-        out = pr_review_graph.invoke(pr_number)
-        report = repo.latest_pr_review_report(pr_number)
-        return {
-            "ok": True,
-            "mode": "sync",
-            "notifications": out.get("notifications", []),
-            "errors": out.get("errors", []),
-            "report": report.model_dump() if report else None,
-        }
+        out = _execute_review(pr_number)
+        out["mode"] = "sync"
+        return out
 
     @app.post("/reviews/run-open")
     def run_open_pr_reviews(limit: int = 50) -> dict:
