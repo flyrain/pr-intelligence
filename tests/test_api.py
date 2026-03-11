@@ -418,6 +418,56 @@ def test_ui_new_updated_prs_folds_after_first_ten() -> None:
     assert "Show 2 more PRs" in resp.text
 
 
+def test_ui_new_updated_prs_excludes_closed_prs() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=901,
+            title="Open PR",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/901",
+            updated_at=now,
+        )
+    )
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=902,
+            title="Merged PR",
+            body="",
+            state="closed",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/902",
+            updated_at=now,
+        )
+    )
+
+    resp = client.get("/ui")
+    assert resp.status_code == 200
+    assert "Open PR" in resp.text
+    assert "Merged PR" not in resp.text
+
+
 def test_ui_needs_review_folds_after_first_ten() -> None:
     client, repo, _, _ = _client()
     now = datetime.now(timezone.utc)

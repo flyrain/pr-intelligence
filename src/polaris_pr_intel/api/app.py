@@ -245,7 +245,7 @@ def create_app(
             return local_dt.strftime("%H:%M")
 
         new_updated_prs = sorted(
-            [pr for pr in repo.prs.values() if _is_updated_today_local(pr.updated_at)],
+            [pr for pr in repo.prs.values() if pr.state == "open" and _is_updated_today_local(pr.updated_at)],
             key=lambda p: p.updated_at,
             reverse=True,
         )

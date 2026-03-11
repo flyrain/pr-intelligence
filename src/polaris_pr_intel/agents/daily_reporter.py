@@ -22,7 +22,7 @@ class DailyReporterAgent:
                 return dt.date() == today
             return dt.astimezone(local_tz).date() == today
 
-        new_prs_today = [pr for pr in repo.prs.values() if _is_updated_today_local(pr.updated_at)]
+        new_prs_today = [pr for pr in repo.prs.values() if pr.state == "open" and _is_updated_today_local(pr.updated_at)]
         aging_prs = [pr for pr in repo.prs.values() if (now_dt - pr.updated_at).total_seconds() / 3600 >= 72 and pr.state == "open"]
         issue_label_counts: dict[str, int] = {}
         for issue in repo.issues.values():

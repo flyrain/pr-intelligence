@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.llm.adapters import HeuristicLLMAdapter
-from polaris_pr_intel.models import GitHubEvent
+from polaris_pr_intel.models import GitHubEvent, PullRequestSnapshot
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.agents.pr_reviewer import PRSubagentReviewer
 
@@ -120,3 +122,55 @@ def test_pr_review_graph_creates_report_for_existing_pr() -> None:
     assert report is not None
     assert report.pr_number == 51
     assert len(report.findings) == 4
+
+
+def test_daily_report_new_updated_prs_excludes_closed_prs() -> None:
+    repo = InMemoryRepository()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=601,
+            title="Open PR today",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/601",
+            updated_at=now,
+        )
+    )
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=602,
+            title="Merged PR today",
+            body="",
+            state="closed",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/602",
+            updated_at=now,
+        )
+    )
+
+    graph = DailyReportGraph(repo)
+    graph.invoke()
+    report = repo.latest_daily_report()
+    assert report is not None
+    assert "Open PR today" in report.markdown
+    assert "Merged PR today" not in report.markdown
