@@ -64,6 +64,21 @@ def test_claude_code_local_adapter_falls_back_on_failure(monkeypatch) -> None:
     assert finding.summary.startswith("(fallback heuristic:")
 
 
+def test_claude_code_local_adapter_raises_on_auth_failure(monkeypatch) -> None:
+    adapter = ClaudeCodeLocalAdapter(command="claude")
+
+    def _fake_run(*args, **kwargs):
+        raise subprocess.CalledProcessError(
+            returncode=1,
+            cmd="claude",
+            stderr='{"result":"Failed to authenticate. API Error: 401"}',
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    with pytest.raises(RuntimeError, match="authentication failed"):
+        adapter.analyze_pr("security-signal", "security and permission model", _pr())
+
+
 def test_factory_builds_claude_code_local_adapter(monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")

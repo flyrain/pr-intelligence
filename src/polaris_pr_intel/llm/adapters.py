@@ -207,12 +207,15 @@ PR description:
         try:
             cmd = [
                 self.command,
+                "--print",
                 "--dangerously-skip-permissions",
                 "--output-format", "json",
-                "--max-turns", str(self.max_turns),
                 "--allowedTools", "Read,Grep,Glob,Bash",
-                "-p", prompt,
+                "--setting-sources", "user,project,local",
             ]
+            if self.model and self.model not in {"claude-code-local", "local-heuristic"}:
+                cmd.extend(["--model", self.model])
+            cmd.append(prompt)
             proc = subprocess.run(
                 cmd,
                 check=True,
@@ -229,8 +232,17 @@ PR description:
             finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
             return finding
         except Exception as exc:
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            if "Failed to authenticate" in detail or "API Error: 401" in detail or "Not logged in" in detail:
+                raise RuntimeError(
+                    "claude-code-local authentication failed. Run `claude auth login` (or `claude setup-token`) and retry."
+                ) from exc
             fallback = super().analyze_pr(agent_name, focus_area, pr)
-            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {str(exc)[:160]}) {fallback.summary}"
+            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
             return fallback
 
 

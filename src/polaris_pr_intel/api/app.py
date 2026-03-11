@@ -676,7 +676,7 @@ def create_app(
               <tbody>{''.join(deep_review_rows) if deep_review_rows else '<tr><td colspan="4">No deep reviews yet.</td></tr>'}</tbody>
             </table>
             <h3 style="margin-top:14px;">Deep Review Details</h3>
-            <div>{''.join(deep_review_details[:6]) if deep_review_details else '<p class="muted">No detailed findings yet.</p>'}</div>
+            <div>{''.join(deep_review_details) if deep_review_details else '<p class="muted">No detailed findings yet.</p>'}</div>
           </details>
         </article>
         <article class="card" style="margin-top: 14px;">
