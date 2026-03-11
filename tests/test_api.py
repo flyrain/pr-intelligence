@@ -372,13 +372,15 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Deep Review Details" in resp.text
     assert "Review Jobs" in resp.text
     assert "Sync All Open PRs/Issues" in resp.text
+    assert '<details class="tab-fold">' in resp.text
+    assert '<details class="tab-fold" open>' not in resp.text
     assert '<details class="queue-section">' in resp.text
     assert '<details class="queue-section" open>' not in resp.text
     assert "New/Updated PRs Today" in resp.text
     assert "Aging Open PRs (72h+)" in resp.text
     assert "Review" in resp.text
-    assert resp.text.count("New/Updated PRs Today") == 1
-    assert resp.text.index("New/Updated PRs Today") < resp.text.index("Aging Open PRs (72h+)")
+    assert resp.text.count("New/Updated PRs Today") >= 1
+    assert resp.text.index("<summary>New/Updated PRs Today</summary>") < resp.text.index("<summary>Latest Report</summary>")
 
 
 def test_ui_new_updated_prs_folds_after_first_ten() -> None:
@@ -449,6 +451,40 @@ def test_ui_needs_review_folds_after_first_ten() -> None:
     resp = client.get("/ui")
     assert resp.status_code == 200
     assert resp.text.count("Show 2 more PRs") >= 1
+
+
+def test_ui_interesting_issues_folds_after_first_ten() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    from polaris_pr_intel.models import IssueSnapshot
+
+    for issue_number in range(300, 312):
+        repo.upsert_issue(
+            IssueSnapshot(
+                number=issue_number,
+                title=f"Interesting issue {issue_number}",
+                body="",
+                state="open",
+                author="alice",
+                labels=["bug"],
+                comments=6,
+                assignees=[],
+                html_url=f"https://example.com/issues/{issue_number}",
+                updated_at=now,
+            )
+        )
+        repo.save_issue_signal(
+            IssueSignal(
+                issue_number=issue_number,
+                score=10.0 - ((issue_number - 300) * 0.1),
+                reasons=["label:bug", "high-discussion", "open"],
+                interesting=True,
+            )
+        )
+
+    resp = client.get("/ui")
+    assert resp.status_code == 200
+    assert "Show 2 more issues" in resp.text
 
 
 def test_pr_review_endpoints() -> None:

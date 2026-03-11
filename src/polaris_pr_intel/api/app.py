@@ -111,32 +111,6 @@ def create_app(
         close_list()
         return "\n".join(parts)
 
-    def _remove_markdown_section(markdown: str, heading: str) -> str:
-        lines = markdown.splitlines()
-        out: list[str] = []
-        skip = False
-        target = f"## {heading}".strip()
-        for line in lines:
-            if line.strip() == target:
-                skip = True
-                continue
-            if skip and line.startswith("## "):
-                skip = False
-            if not skip:
-                out.append(line)
-        return "\n".join(out).strip()
-
-    def _remove_legacy_report_title(markdown: str) -> str:
-        lines = markdown.splitlines()
-        out: list[str] = []
-        removed = False
-        for line in lines:
-            if not removed and line.startswith("# Polaris PR Intelligence Report"):
-                removed = True
-                continue
-            out.append(line)
-        return "\n".join(out).strip()
-
     def _is_target_review_pr(pr, signal) -> bool:
         if not review_target_login:
             return True
@@ -205,13 +179,8 @@ def create_app(
         local_today = local_now.date()
         local_tz = local_now.tzinfo
         latest = repo.latest_daily_report()
-        report_markdown_for_ui = (
-            _remove_markdown_section(_remove_legacy_report_title(latest.markdown), "New/Updated PRs Today")
-            if latest
-            else ""
-        )
         latest_report_html = (
-            _report_markdown_to_html(report_markdown_for_ui)
+            _report_markdown_to_html(latest.markdown)
             if latest
             else "<h2>No Report Yet</h2><p>Run <code>POST /reports/daily/run</code> to generate one.</p>"
         )
@@ -231,7 +200,7 @@ def create_app(
             [pr for pr in repo.prs.values() if _is_updated_today_local(pr.updated_at)],
             key=lambda p: p.updated_at,
             reverse=True,
-        )[:20]
+        )
         for pr in new_updated_prs:
             new_updated_rows.append(
                 "<tr>"
@@ -256,7 +225,7 @@ def create_app(
         )
 
         review_rows = []
-        for signal in sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True)[:20]:
+        for signal in sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True):
             pr = repo.prs.get(signal.pr_number)
             if not pr or not signal.needs_review:
                 continue
@@ -282,7 +251,7 @@ def create_app(
             else ""
         )
         issue_rows = []
-        for signal in sorted(repo.issue_signals.values(), key=lambda s: s.score, reverse=True)[:20]:
+        for signal in sorted(repo.issue_signals.values(), key=lambda s: s.score, reverse=True):
             issue = repo.issues.get(signal.issue_number)
             if not issue or not signal.interesting:
                 continue
@@ -290,6 +259,19 @@ def create_app(
                 f"<tr><td><a href=\"{escape(issue.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{issue.number}</a></td>"
                 f"<td>{escape(issue.title)}</td><td>{signal.score:.1f}</td><td>{escape(', '.join(signal.reasons))}</td></tr>"
             )
+        visible_issue_rows = issue_rows[:10]
+        folded_issue_rows = issue_rows[10:]
+        folded_issue_html = (
+            "<details class=\"folded-section\">"
+            f"<summary>Show {len(folded_issue_rows)} more issues</summary>"
+            "<table>"
+            "<thead><tr><th>Issue</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>"
+            f"<tbody>{''.join(folded_issue_rows)}</tbody>"
+            "</table>"
+            "</details>"
+            if folded_issue_rows
+            else ""
+        )
         deep_review_rows = []
         deep_review_details = []
         for report in repo.top_pr_review_reports(limit=20):
@@ -422,6 +404,16 @@ def create_app(
       grid-template-columns: 1.1fr .9fr;
       gap: 16px;
       align-items: start;
+    }}
+    .tab-fold > summary {{
+      cursor: pointer;
+      font-family: "IBM Plex Serif", Georgia, serif;
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }}
+    .tab-fold[open] > summary {{
+      margin-bottom: 12px;
     }}
     table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
     th, td {{ border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: left; vertical-align: top; }}
@@ -588,17 +580,25 @@ def create_app(
     </section>
 
     <section class="layout">
-      <article class="card">
-        <h2>Latest Report</h2>
-        <p class="muted">Date: {escape(stats["latest_report_date"] or "N/A")}</p>
-        <h3 style="margin-top:14px;">New/Updated PRs Today</h3>
-        <table>
-          <thead><tr><th>PR</th><th>Title</th><th>Updated</th><th>Action</th></tr></thead>
-          <tbody>{''.join(visible_new_updated_rows) if new_updated_rows else '<tr><td colspan="4">No PR updates observed today.</td></tr>'}</tbody>
-        </table>
-        {folded_new_updated_html}
-        <div class="report">{latest_report_html}</div>
-      </article>
+      <div>
+        <article class="card">
+          <details class="tab-fold">
+            <summary>New/Updated PRs Today</summary>
+            <table>
+              <thead><tr><th>PR</th><th>Title</th><th>Updated</th><th>Action</th></tr></thead>
+              <tbody>{''.join(visible_new_updated_rows) if new_updated_rows else '<tr><td colspan="4">No PR updates observed today.</td></tr>'}</tbody>
+            </table>
+            {folded_new_updated_html}
+          </details>
+        </article>
+        <article class="card" style="margin-top: 14px;">
+          <details class="tab-fold">
+            <summary>Latest Report</summary>
+            <p class="muted">Date: {escape(stats["latest_report_date"] or "N/A")}</p>
+            <div class="report">{latest_report_html}</div>
+          </details>
+        </article>
+      </div>
       <aside>
         <article class="card">
           <details class="queue-section">
@@ -615,18 +615,21 @@ def create_app(
             <summary>Interesting Issues ({stats["interesting_issues_queue"]})</summary>
             <table>
               <thead><tr><th>Issue</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
-              <tbody>{''.join(issue_rows) if issue_rows else '<tr><td colspan="4">No issues queued.</td></tr>'}</tbody>
+              <tbody>{''.join(visible_issue_rows) if issue_rows else '<tr><td colspan="4">No issues queued.</td></tr>'}</tbody>
             </table>
+            {folded_issue_html}
           </details>
         </article>
         <article class="card" style="margin-top: 14px;">
-          <h3>Deep PR Reviews</h3>
-          <table>
-            <thead><tr><th>PR</th><th>Title</th><th>Priority</th><th>Provider</th></tr></thead>
-            <tbody>{''.join(deep_review_rows) if deep_review_rows else '<tr><td colspan="4">No deep reviews yet.</td></tr>'}</tbody>
-          </table>
-          <h3 style="margin-top:14px;">Deep Review Details</h3>
-          <div>{''.join(deep_review_details[:6]) if deep_review_details else '<p class="muted">No detailed findings yet.</p>'}</div>
+          <details class="queue-section">
+            <summary>Deep PR Reviews ({len(deep_review_rows)})</summary>
+            <table>
+              <thead><tr><th>PR</th><th>Title</th><th>Priority</th><th>Provider</th></tr></thead>
+              <tbody>{''.join(deep_review_rows) if deep_review_rows else '<tr><td colspan="4">No deep reviews yet.</td></tr>'}</tbody>
+            </table>
+            <h3 style="margin-top:14px;">Deep Review Details</h3>
+            <div>{''.join(deep_review_details[:6]) if deep_review_details else '<p class="muted">No detailed findings yet.</p>'}</div>
+          </details>
         </article>
         <article class="card" style="margin-top: 14px;">
           <h3>Review Jobs</h3>
