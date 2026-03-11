@@ -152,6 +152,8 @@ def create_app(
             pr = repo.prs.get(signal.pr_number)
             if not pr:
                 continue
+            if pr.state != "open":
+                continue
             if _is_target_review_pr(pr, signal):
                 needs_review_count += 1
         interesting_issue_count = sum(1 for s in repo.issue_signals.values() if s.interesting)
@@ -257,6 +259,8 @@ def create_app(
         for signal in sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True)[:20]:
             pr = repo.prs.get(signal.pr_number)
             if not pr or not signal.needs_review:
+                continue
+            if pr.state != "open":
                 continue
             if not _is_target_review_pr(pr, signal):
                 continue
@@ -655,7 +659,12 @@ def create_app(
     def run_daily_report(refresh: bool = True, per_page: int = 100, max_pages: int = 20) -> dict:
         synced: dict | None = None
         if refresh:
-            synced = snapshot_ingestor.sync_recent(per_page=per_page, max_pages=max_pages, since=None)
+            synced = snapshot_ingestor.sync_recent(
+                per_page=per_page,
+                max_pages=max_pages,
+                since=None,
+                prune_missing_open_prs=True,
+            )
         out = daily_graph.invoke()
         resp = {"ok": True, "notifications": out.get("notifications", [])}
         if synced is not None:
@@ -668,8 +677,13 @@ def create_app(
         return {"ok": True, "synced": synced}
 
     @app.post("/sync/all-open")
-    def sync_all_open(per_page: int = 100, max_pages: int = 20) -> dict:
-        synced = snapshot_ingestor.sync_recent(per_page=per_page, max_pages=max_pages, since=None)
+    def sync_all_open(per_page: int = 100, max_pages: int = 20, prune_missing_open_prs: bool = True) -> dict:
+        synced = snapshot_ingestor.sync_recent(
+            per_page=per_page,
+            max_pages=max_pages,
+            since=None,
+            prune_missing_open_prs=prune_missing_open_prs,
+        )
         return {"ok": True, "synced": synced}
 
     @app.post("/scores/recompute")
@@ -857,6 +871,8 @@ def create_app(
                 continue
             pr = repo.prs.get(signal.pr_number)
             if not pr:
+                continue
+            if pr.state != "open":
                 continue
             if not _is_target_review_pr(pr, signal):
                 continue

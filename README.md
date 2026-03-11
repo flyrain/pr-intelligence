@@ -24,13 +24,16 @@ Open:
 # 1. sync data
 ./run.sh sync-all
 
-# 2. run deep review on one PR (async)
+# 2. recompute review/issue signals from synced snapshots
+./run.sh recompute
+
+# 3. run deep review on one PR (async)
 ./run.sh review 123
 
-# 3. or sync review on one PR (wait for result)
+# 4. or sync review on one PR (wait for result)
 ./run.sh review-sync 123
 
-# 4. generate report
+# 5. generate report
 ./run.sh report
 ```
 
@@ -38,6 +41,10 @@ Open:
 ```bash
 # sync all open PRs/issues
 curl -X POST "http://127.0.0.1:8080/sync/all-open?per_page=100&max_pages=20"
+# (default) also marks stale locally-open PRs as closed when no longer in GitHub open list
+
+# recompute needs-review / interesting-issues queues
+curl -X POST "http://127.0.0.1:8080/scores/recompute"
 
 # async deep review
 curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run"
@@ -60,6 +67,7 @@ curl "http://127.0.0.1:8080/reports/daily/latest.md"
 ```bash
 ./run.sh serve                # start API server
 ./run.sh sync-all             # sync all open PRs/issues
+./run.sh recompute            # recompute review/issue signals
 ./run.sh sync                 # sync recent PRs/issues
 ./run.sh report               # generate + print daily report
 ./run.sh review 123           # async deep review for PR 123
@@ -117,6 +125,7 @@ PORT=9090 ./run.sh serve
 
 - `GET /`, `GET /ui`, `GET /docs`, `GET /healthz`
 - `POST /sync/recent`, `POST /sync/all-open`
+- `POST /scores/recompute`
 - `POST /reports/daily/run`
 - `GET /reports/daily/latest`, `GET /reports/daily/latest.md`, `GET /reports/daily`
 - `POST /reviews/pr/{pr_number}/run` (async by default)

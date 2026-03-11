@@ -25,9 +25,22 @@ class _DummyIngestor:
         self.calls: list[dict] = []
         self.pr_calls: list[int] = []
 
-    def sync_recent(self, per_page: int = 30, max_pages: int = 1, since: str | None = None) -> dict[str, int]:
-        self.calls.append({"per_page": per_page, "max_pages": max_pages, "since": since})
-        return {"prs": per_page * max_pages, "issues": 1 if since else 0}
+    def sync_recent(
+        self,
+        per_page: int = 30,
+        max_pages: int = 1,
+        since: str | None = None,
+        prune_missing_open_prs: bool = False,
+    ) -> dict[str, int]:
+        self.calls.append(
+            {
+                "per_page": per_page,
+                "max_pages": max_pages,
+                "since": since,
+                "prune_missing_open_prs": prune_missing_open_prs,
+            }
+        )
+        return {"prs": per_page * max_pages, "issues": 1 if since else 0, "closed_prs_marked": 0}
 
     def sync_pr(self, pr_number: int) -> bool:
         self.pr_calls.append(pr_number)
@@ -204,6 +217,39 @@ def test_needs_review_filters_to_target_login_when_configured(monkeypatch) -> No
     assert stats["stats"]["needs_review_queue"] == 1
 
 
+def test_needs_review_excludes_closed_prs() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=10,
+            title="Closed PR",
+            body="",
+            state="closed",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=["alice"],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/10",
+            updated_at=now,
+        )
+    )
+    repo.save_review_signal(ReviewSignal(pr_number=10, score=5.0, reasons=["requested-you"], needs_review=True))
+
+    queued = client.get("/queues/needs-review")
+    assert queued.status_code == 200
+    assert queued.json() == []
+
+    stats = client.get("/stats").json()
+    assert stats["stats"]["needs_review_queue"] == 0
+
+
 def test_latest_report_markdown_endpoint() -> None:
     client, repo, _, _ = _client()
     empty = client.get("/reports/daily/latest.md")
@@ -223,7 +269,7 @@ def test_run_daily_report_refreshes_by_default() -> None:
     data = resp.json()
     assert data["ok"] is True
     assert data["synced"]["prs"] == 2000
-    assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None}
+    assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None, "prune_missing_open_prs": True}
 
 
 def test_sync_all_open_endpoint() -> None:
@@ -231,7 +277,7 @@ def test_sync_all_open_endpoint() -> None:
     resp = client.post("/sync/all-open", params={"per_page": 50, "max_pages": 3})
     assert resp.status_code == 200
     assert resp.json()["synced"]["prs"] == 150
-    assert ingestor.calls[0] == {"per_page": 50, "max_pages": 3, "since": None}
+    assert ingestor.calls[0] == {"per_page": 50, "max_pages": 3, "since": None, "prune_missing_open_prs": True}
 
 
 def test_scores_recompute_endpoint_populates_queues() -> None:

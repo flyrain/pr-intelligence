@@ -11,25 +11,47 @@ class SnapshotIngestor:
         self.gh = gh
         self.repo = repo
 
-    def sync_recent(self, per_page: int = 30, max_pages: int = 1, since: str | None = None) -> dict[str, int]:
+    def sync_recent(
+        self,
+        per_page: int = 30,
+        max_pages: int = 1,
+        since: str | None = None,
+        prune_missing_open_prs: bool = False,
+    ) -> dict[str, int]:
         total_prs = 0
         total_issues = 0
+        closed_prs_marked = 0
+        seen_open_pr_numbers: set[int] = set()
+        prs_exhausted = False
         for page in range(1, max_pages + 1):
             prs = self.gh.list_recent_pull_requests(per_page=per_page, page=page)
             issues = self.gh.list_recent_issues(per_page=per_page, page=page, since=since)
 
             for pr in prs:
                 self.repo.upsert_pr(pr)
+                seen_open_pr_numbers.add(pr.number)
                 total_prs += 1
             for issue in issues:
                 self.repo.upsert_issue(issue)
                 total_issues += 1
 
+            if len(prs) < per_page:
+                prs_exhausted = True
             if len(prs) < per_page and len(issues) < per_page:
                 break
 
+        if prune_missing_open_prs and since is None and prs_exhausted:
+            for pr in list(self.repo.prs.values()):
+                if pr.state != "open":
+                    continue
+                if pr.number in seen_open_pr_numbers:
+                    continue
+                pr.state = "closed"
+                self.repo.upsert_pr(pr)
+                closed_prs_marked += 1
+
         self.repo.last_sync_at = datetime.now(timezone.utc)
-        return {"prs": total_prs, "issues": total_issues}
+        return {"prs": total_prs, "issues": total_issues, "closed_prs_marked": closed_prs_marked}
 
     def sync_pr(self, pr_number: int) -> bool:
         try:
