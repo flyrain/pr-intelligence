@@ -53,8 +53,8 @@ class DailyReporterAgent:
         lines += ["", "## Aging Open PRs (72h+)"]
         if aging_prs:
             for pr in sorted(aging_prs, key=lambda p: p.updated_at)[:10]:
-                age_hours = int((now_dt - pr.updated_at).total_seconds() / 3600)
-                lines.append(f"- [#{pr.number}]({pr.html_url}) {pr.title} | age={age_hours}h")
+                age_days = int((now_dt - pr.updated_at).total_seconds() / 86400)
+                lines.append(f"- [#{pr.number}]({pr.html_url}) {pr.title} | age={age_days}d")
         else:
             lines.append("- No aging open PRs above 72h.")
 
