@@ -12,6 +12,9 @@ from uuid import uuid4
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
+from polaris_pr_intel.agents.issue_insight import IssueInsightAgent
+from polaris_pr_intel.agents.review_need import ReviewNeedAgent
+from polaris_pr_intel.config import Settings
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
@@ -33,6 +36,13 @@ def create_app(
     review_jobs: dict[str, dict] = {}
     review_jobs_lock = threading.Lock()
     review_job_timeout_sec = int(os.getenv("REVIEW_JOB_TIMEOUT_SEC", "1200"))
+    review_target_login = (
+        os.getenv("REVIEW_TARGET_LOGIN", "").strip().lower()
+        or os.getenv("GITHUB_REVIEWER_LOGIN", "").strip().lower()
+    )
+    default_settings = Settings(github_token="")
+    review_need_agent = getattr(event_graph, "review_need", ReviewNeedAgent(default_settings))
+    issue_insight_agent = getattr(event_graph, "issue_insight", IssueInsightAgent(default_settings))
 
     def _expire_stuck_jobs() -> None:
         now = datetime.now(timezone.utc)
@@ -127,8 +137,23 @@ def create_app(
             out.append(line)
         return "\n".join(out).strip()
 
+    def _is_target_review_pr(pr, signal) -> bool:
+        if not review_target_login:
+            return True
+        if "requested-you" in signal.reasons:
+            return True
+        return any((r or "").strip().lower() == review_target_login for r in pr.requested_reviewers)
+
     def _stats() -> dict:
-        needs_review_count = sum(1 for s in repo.review_signals.values() if s.needs_review)
+        needs_review_count = 0
+        for signal in repo.review_signals.values():
+            if not signal.needs_review:
+                continue
+            pr = repo.prs.get(signal.pr_number)
+            if not pr:
+                continue
+            if _is_target_review_pr(pr, signal):
+                needs_review_count += 1
         interesting_issue_count = sum(1 for s in repo.issue_signals.values() if s.interesting)
         latest_report = repo.latest_daily_report()
         return {
@@ -152,6 +177,7 @@ def create_app(
             "stats": _stats(),
             "next_steps": [
                 "POST /sync/all-open to pull open PRs/issues from GitHub",
+                "POST /scores/recompute to refresh review/issue signals from synced data",
                 "POST /reports/daily/run to refresh and generate a report",
                 "POST /reviews/pr/{number}/run to run subagent deep review",
                 "GET /queues/needs-review to see prioritized PRs",
@@ -194,6 +220,11 @@ def create_app(
                 return dt.date() == local_today
             return dt.astimezone(local_tz).date() == local_today
 
+        def _fmt_minute_ts(updated_at: datetime) -> str:
+            dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
+            local_dt = dt.astimezone(local_tz) if local_tz else dt
+            return local_dt.strftime("%H:%M")
+
         new_updated_prs = sorted(
             [pr for pr in repo.prs.values() if _is_updated_today_local(pr.updated_at)],
             key=lambda p: p.updated_at,
@@ -204,8 +235,8 @@ def create_app(
                 "<tr>"
                 f"<td><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a></td>"
                 f"<td>{escape(pr.title)}</td>"
-                f"<td>{escape(pr.updated_at.isoformat())}</td>"
-                f"<td><button class=\"action-btn\" onclick=\"runPrReview({pr.number}, this)\">Run Review</button></td>"
+                f"<td>{escape(_fmt_minute_ts(pr.updated_at))}</td>"
+                f"<td><button class=\"action-btn\" onclick=\"runPrReview({pr.number}, this)\">Review</button></td>"
                 "</tr>"
             )
         visible_new_updated_rows = new_updated_rows[:10]
@@ -227,10 +258,25 @@ def create_app(
             pr = repo.prs.get(signal.pr_number)
             if not pr or not signal.needs_review:
                 continue
+            if not _is_target_review_pr(pr, signal):
+                continue
             review_rows.append(
                 f"<tr><td><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a></td>"
                 f"<td>{escape(pr.title)}</td><td>{signal.score:.1f}</td><td>{escape(', '.join(signal.reasons))}</td></tr>"
             )
+        visible_review_rows = review_rows[:10]
+        folded_review_rows = review_rows[10:]
+        folded_review_html = (
+            "<details class=\"folded-section\">"
+            f"<summary>Show {len(folded_review_rows)} more PRs</summary>"
+            "<table>"
+            "<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>"
+            f"<tbody>{''.join(folded_review_rows)}</tbody>"
+            "</table>"
+            "</details>"
+            if folded_review_rows
+            else ""
+        )
         issue_rows = []
         for signal in sorted(repo.issue_signals.values(), key=lambda s: s.score, reverse=True)[:20]:
             issue = repo.issues.get(signal.issue_number)
@@ -543,8 +589,9 @@ def create_app(
           <h3>PRs Needing Review</h3>
           <table>
             <thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
-            <tbody>{''.join(review_rows) if review_rows else '<tr><td colspan="4">No PRs queued.</td></tr>'}</tbody>
+            <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="4">No PRs queued.</td></tr>'}</tbody>
           </table>
+          {folded_review_html}
         </article>
         <article class="card" style="margin-top: 14px;">
           <h3>Interesting Issues</h3>
@@ -624,6 +671,41 @@ def create_app(
     def sync_all_open(per_page: int = 100, max_pages: int = 20) -> dict:
         synced = snapshot_ingestor.sync_recent(per_page=per_page, max_pages=max_pages, since=None)
         return {"ok": True, "synced": synced}
+
+    @app.post("/scores/recompute")
+    def recompute_scores(open_only: bool = True) -> dict:
+        prs_scored = 0
+        issues_scored = 0
+        needs_review = 0
+        interesting_issues = 0
+
+        for pr in repo.prs.values():
+            if open_only and pr.state != "open":
+                continue
+            signal = review_need_agent.run(pr)
+            repo.save_review_signal(signal)
+            prs_scored += 1
+            if signal.needs_review:
+                needs_review += 1
+
+        for issue in repo.issues.values():
+            if open_only and issue.state != "open":
+                continue
+            signal = issue_insight_agent.run(issue)
+            repo.save_issue_signal(signal)
+            issues_scored += 1
+            if signal.interesting:
+                interesting_issues += 1
+
+        return {
+            "ok": True,
+            "scored": {
+                "prs": prs_scored,
+                "issues": issues_scored,
+                "needs_review": needs_review,
+                "interesting_issues": interesting_issues,
+            },
+        }
 
     @app.post("/reviews/pr/{pr_number}/run")
     def run_pr_review(pr_number: int, wait: bool = False) -> dict:
@@ -775,6 +857,8 @@ def create_app(
                 continue
             pr = repo.prs.get(signal.pr_number)
             if not pr:
+                continue
+            if not _is_target_review_pr(pr, signal):
                 continue
             items.append(QueueItem(number=pr.number, title=pr.title, score=signal.score, reasons=signal.reasons, url=pr.html_url))
         return items

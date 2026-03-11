@@ -108,6 +108,26 @@ def test_daily_report_list_supports_limit_and_offset() -> None:
 
 def test_root_and_stats_endpoints_return_useful_summary() -> None:
     client, repo, _, _ = _client()
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=1,
+            title="Needs review",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/1",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
     repo.save_review_signal(ReviewSignal(pr_number=1, score=3.0, reasons=["reviewers-requested"], needs_review=True))
     repo.save_issue_signal(IssueSignal(issue_number=2, score=2.5, reasons=["label:bug"], interesting=True))
     repo.save_daily_report(DailyReport(date="2026-03-10", markdown="report"))
@@ -126,6 +146,62 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
     stats_data = stats.json()
     assert stats_data["ok"] is True
     assert stats_data["stats"]["interesting_issues_queue"] == 1
+
+
+def test_needs_review_filters_to_target_login_when_configured(monkeypatch) -> None:
+    monkeypatch.setenv("REVIEW_TARGET_LOGIN", "alice")
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=1,
+            title="Mine",
+            body="",
+            state="open",
+            draft=False,
+            author="x",
+            labels=[],
+            requested_reviewers=["alice"],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/1",
+            updated_at=now,
+        )
+    )
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=2,
+            title="Others",
+            body="",
+            state="open",
+            draft=False,
+            author="x",
+            labels=[],
+            requested_reviewers=["bob"],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/2",
+            updated_at=now,
+        )
+    )
+    repo.save_review_signal(ReviewSignal(pr_number=1, score=3.0, reasons=["requested-you"], needs_review=True))
+    repo.save_review_signal(ReviewSignal(pr_number=2, score=3.0, reasons=["reviewers-requested"], needs_review=True))
+
+    queued = client.get("/queues/needs-review")
+    assert queued.status_code == 200
+    data = queued.json()
+    assert [item["number"] for item in data] == [1]
+
+    stats = client.get("/stats").json()
+    assert stats["stats"]["needs_review_queue"] == 1
 
 
 def test_latest_report_markdown_endpoint() -> None:
@@ -156,6 +232,59 @@ def test_sync_all_open_endpoint() -> None:
     assert resp.status_code == 200
     assert resp.json()["synced"]["prs"] == 150
     assert ingestor.calls[0] == {"per_page": 50, "max_pages": 3, "since": None}
+
+
+def test_scores_recompute_endpoint_populates_queues() -> None:
+    client, repo, _, _ = _client()
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=77,
+            title="Large auth update",
+            body="security",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=["bob"],
+            comments=0,
+            review_comments=0,
+            commits=5,
+            changed_files=30,
+            additions=900,
+            deletions=200,
+            html_url="https://example.com/pr/77",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    from polaris_pr_intel.models import IssueSnapshot
+
+    repo.upsert_issue(
+        IssueSnapshot(
+            number=88,
+            title="Bug in planner",
+            body="",
+            state="open",
+            author="alice",
+            labels=["bug"],
+            comments=6,
+            assignees=[],
+            html_url="https://example.com/issues/88",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+
+    resp = client.post("/scores/recompute")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["ok"] is True
+    assert payload["scored"]["prs"] == 1
+    assert payload["scored"]["issues"] == 1
+    assert payload["scored"]["needs_review"] >= 1
+    assert payload["scored"]["interesting_issues"] >= 1
+
+    needs_review = client.get("/queues/needs-review")
+    assert needs_review.status_code == 200
+    assert needs_review.json()[0]["number"] == 77
 
 
 def test_ui_endpoint_renders_dashboard() -> None:
@@ -199,7 +328,7 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Sync All Open PRs/Issues" in resp.text
     assert "New/Updated PRs Today" in resp.text
     assert "Aging Open PRs (72h+)" in resp.text
-    assert "Run Review" in resp.text
+    assert "Review" in resp.text
     assert resp.text.count("New/Updated PRs Today") == 1
     assert resp.text.index("New/Updated PRs Today") < resp.text.index("Aging Open PRs (72h+)")
 
@@ -234,6 +363,44 @@ def test_ui_new_updated_prs_folds_after_first_ten() -> None:
     assert resp.status_code == 200
     assert '<details class="folded-section">' in resp.text
     assert "Show 2 more PRs" in resp.text
+
+
+def test_ui_needs_review_folds_after_first_ten() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    for pr_number in range(200, 212):
+        repo.upsert_pr(
+            PullRequestSnapshot(
+                number=pr_number,
+                title=f"Needs review PR {pr_number}",
+                body="",
+                state="open",
+                draft=False,
+                author="alice",
+                labels=[],
+                requested_reviewers=[],
+                comments=0,
+                review_comments=0,
+                commits=1,
+                changed_files=1,
+                additions=3,
+                deletions=1,
+                html_url=f"https://example.com/pr/{pr_number}",
+                updated_at=now,
+            )
+        )
+        repo.save_review_signal(
+            ReviewSignal(
+                pr_number=pr_number,
+                score=10.0 - ((pr_number - 200) * 0.1),
+                reasons=["reviewers-requested"],
+                needs_review=True,
+            )
+        )
+
+    resp = client.get("/ui")
+    assert resp.status_code == 200
+    assert resp.text.count("Show 2 more PRs") >= 1
 
 
 def test_pr_review_endpoints() -> None:
