@@ -61,7 +61,7 @@ def test_claude_code_local_adapter_falls_back_on_failure(monkeypatch) -> None:
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
     finding = adapter.analyze_pr("security-signal", "security and permission model", _pr())
-    assert finding.summary.startswith("(fallback heuristic)")
+    assert finding.summary.startswith("(fallback heuristic:")
 
 
 def test_factory_builds_claude_code_local_adapter(monkeypatch) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from html import escape
@@ -31,6 +32,30 @@ def create_app(
     app = FastAPI(title="Polaris PR Intelligence")
     review_jobs: dict[str, dict] = {}
     review_jobs_lock = threading.Lock()
+    review_job_timeout_sec = int(os.getenv("REVIEW_JOB_TIMEOUT_SEC", "1200"))
+
+    def _expire_stuck_jobs() -> None:
+        now = datetime.now(timezone.utc)
+        with review_jobs_lock:
+            for job in review_jobs.values():
+                if job.get("status") != "running":
+                    continue
+                started_at = str(job.get("started_at") or "").strip()
+                if not started_at:
+                    continue
+                try:
+                    started = datetime.fromisoformat(started_at)
+                except ValueError:
+                    continue
+                elapsed = (now - started).total_seconds()
+                if elapsed > review_job_timeout_sec:
+                    job["status"] = "failed"
+                    job["finished_at"] = now.isoformat()
+                    job["result"] = {
+                        "ok": False,
+                        "errors": [f"job-timeout:{review_job_timeout_sec}s"],
+                        "report": None,
+                    }
 
     def _report_markdown_to_html(markdown: str) -> str:
         parts: list[str] = []
@@ -243,6 +268,7 @@ def create_app(
                 f"{''.join(findings_html) if findings_html else '<p>No findings.</p>'}"
                 "</details>"
             )
+        _expire_stuck_jobs()
         with review_jobs_lock:
             jobs_snapshot = list(review_jobs.values())
         jobs_snapshot.sort(key=lambda j: j.get("created_at") or "", reverse=True)
@@ -663,6 +689,7 @@ def create_app(
 
     @app.get("/reviews/jobs/{job_id}")
     def pr_review_job_status(job_id: str) -> dict:
+        _expire_stuck_jobs()
         with review_jobs_lock:
             job = review_jobs.get(job_id)
         if not job:
@@ -671,6 +698,7 @@ def create_app(
 
     @app.get("/reviews/pr/{pr_number}/job")
     def pr_review_latest_job_status(pr_number: int) -> dict:
+        _expire_stuck_jobs()
         with review_jobs_lock:
             jobs = [j for j in review_jobs.values() if j.get("pr_number") == pr_number]
         if not jobs:

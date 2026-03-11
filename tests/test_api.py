@@ -292,6 +292,32 @@ def test_pr_review_async_job_mode() -> None:
     assert job_id in ui.text
 
 
+def test_pr_review_job_auto_expires_stuck_running(monkeypatch) -> None:
+    monkeypatch.setenv("REVIEW_JOB_TIMEOUT_SEC", "0")
+    client, _, _, pr_review_graph = _client()
+
+    def _slow_invoke(pr_number: int) -> dict:
+        time.sleep(0.2)
+        return {"notifications": [f"pr-review:{pr_number}"], "errors": []}
+
+    pr_review_graph.invoke = _slow_invoke  # type: ignore[method-assign]
+
+    run = client.post("/reviews/pr/321/run")
+    assert run.status_code == 200
+    job_id = run.json()["job_id"]
+
+    status = client.get(f"/reviews/jobs/{job_id}")
+    assert status.status_code == 200
+    body = status.json()
+    assert body["ok"] is True
+    assert body["job"]["status"] in {"running", "failed"}
+    if body["job"]["status"] == "running":
+        time.sleep(0.05)
+        body = client.get(f"/reviews/jobs/{job_id}").json()
+    assert body["job"]["status"] == "failed"
+    assert body["job"]["result"]["errors"] == ["job-timeout:0s"]
+
+
 def test_run_open_pr_reviews_endpoint() -> None:
     client, repo, _, pr_review_graph = _client()
     repo.upsert_pr(

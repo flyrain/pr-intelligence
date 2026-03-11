@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from polaris_pr_intel.models import PRSubagentFinding, PullRequestSnapshot
 
@@ -226,9 +228,9 @@ PR description:
             finding.score = _clamp(finding.score, 0.0, 1.0)
             finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
             return finding
-        except Exception:
+        except Exception as exc:
             fallback = super().analyze_pr(agent_name, focus_area, pr)
-            fallback.summary = f"(fallback heuristic) {fallback.summary}"
+            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {str(exc)[:160]}) {fallback.summary}"
             return fallback
 
 
@@ -290,15 +292,21 @@ PR description:
 
     def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_prompt(agent_name, focus_area, pr)
+        last_message_path: str | None = None
         try:
+            with tempfile.NamedTemporaryFile(prefix="codex_last_", suffix=".txt", delete=False) as tmp:
+                last_message_path = tmp.name
             cmd = [
                 self.command,
                 "exec",
-                "--json",
-                "--max-turns",
-                str(self.max_turns),
-                prompt,
+                "--full-auto",
+                "--skip-git-repo-check",
+                "--output-last-message",
+                last_message_path,
             ]
+            if self.model:
+                cmd.extend(["-m", self.model])
+            cmd.append(prompt)
             proc = subprocess.run(
                 cmd,
                 check=True,
@@ -307,14 +315,31 @@ PR description:
                 timeout=self.timeout_sec,
                 cwd=self.repo_dir or None,
             )
-            data = ClaudeCodeLocalAdapter._extract_json_from_result(proc.stdout)
+            raw_output = ""
+            if last_message_path:
+                try:
+                    raw_output = Path(last_message_path).read_text(encoding="utf-8").strip()
+                except Exception:
+                    raw_output = ""
+            data = ClaudeCodeLocalAdapter._extract_json_from_result(raw_output or proc.stdout)
             data["agent_name"] = agent_name
             data["focus_area"] = focus_area
             finding = PRSubagentFinding.model_validate(data)
             finding.score = _clamp(finding.score, 0.0, 1.0)
             finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
             return finding
-        except Exception:
+        except Exception as exc:
             fallback = super().analyze_pr(agent_name, focus_area, pr)
-            fallback.summary = f"(fallback heuristic) {fallback.summary}"
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
             return fallback
+        finally:
+            if last_message_path:
+                try:
+                    Path(last_message_path).unlink(missing_ok=True)
+                except Exception:
+                    pass

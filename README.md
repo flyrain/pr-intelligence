@@ -90,7 +90,7 @@ PORT=9090 ./run.sh serve
 ### LLM provider selection
 - `LLM_PROVIDER` (default: `claude_code_local`)
   - supported: `heuristic`, `openai`, `gemini`, `anthropic`, `claude_code_local`, `codex_local`
-- `LLM_MODEL` (default: `claude-code-local`)
+- `LLM_MODEL` (optional; provider-specific default when unset)
 
 ### Local Claude Code provider
 - `CLAUDE_CODE_CMD` (default: `claude`)
