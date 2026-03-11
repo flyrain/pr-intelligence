@@ -18,6 +18,7 @@ class Settings:
     review_large_diff_points: float = 1.5
     review_medium_diff_points: float = 1.0
     review_many_files_points: float = 1.0
+    review_target_login: str = ""
     store_backend: str = "sqlite"
     sqlite_path: str = ".data/polaris_pr_intel.db"
     llm_provider: str = "claude_code_local"
@@ -72,6 +73,10 @@ def load_settings() -> Settings:
         review_large_diff_points=_float_env("REVIEW_LARGE_DIFF_POINTS", 1.5),
         review_medium_diff_points=_float_env("REVIEW_MEDIUM_DIFF_POINTS", 1.0),
         review_many_files_points=_float_env("REVIEW_MANY_FILES_POINTS", 1.0),
+        review_target_login=(
+            os.getenv("REVIEW_TARGET_LOGIN", "").strip()
+            or os.getenv("GITHUB_REVIEWER_LOGIN", "").strip()
+        ),
         store_backend=os.getenv("STORE_BACKEND", "sqlite").lower(),
         sqlite_path=os.getenv("SQLITE_PATH", ".data/polaris_pr_intel.db"),
         llm_provider=os.getenv("LLM_PROVIDER", "claude_code_local").lower(),

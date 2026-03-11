@@ -104,6 +104,7 @@ PORT=9090 ./run.sh serve
 
 ### Scoring knobs
 - `REVIEW_NEEDED_THRESHOLD` (default: `2.0`)
+- `REVIEW_TARGET_LOGIN` (optional; if this login is in `requested_reviewers`, PR is always included in "PRs Needing Review")
 - `ISSUE_INTERESTING_THRESHOLD` (default: `2.0`)
 - `REVIEW_STALE_24H_POINTS` (default: `1.5`)
 - `REVIEW_STALE_72H_POINTS` (default: `1.5`)
