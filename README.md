@@ -21,7 +21,7 @@ Open:
 
 ### Which command updates what?
 
-- Update **New/Updated PRs Today** tab data (from latest PR snapshots):
+- Update **New/Updated PRs Today** tab data (from latest PR snapshots) and recompute queues:
 ```bash
 ./run.sh sync-all
 ```
@@ -30,11 +30,15 @@ Open:
 ```bash
 ./run.sh report
 ```
+By default this runs refresh first (`refresh=true`) with full sync-all semantics:
+- sync open PRs/issues
+- prune stale locally-open PRs no longer open on GitHub
+- recompute review/issue signals
+- then generate the report markdown
 
 - Full refresh (recommended):
 ```bash
 ./run.sh sync-all
-./run.sh recompute
 ./run.sh report
 ```
 
@@ -43,16 +47,13 @@ Open:
 # 1. sync data
 ./run.sh sync-all
 
-# 2. recompute review/issue signals from synced snapshots
-./run.sh recompute
-
-# 3. run deep review on one PR (async)
+# 2. run deep review on one PR (async)
 ./run.sh review 123
 
-# 4. or sync review on one PR (wait for result)
+# 3. or sync review on one PR (wait for result)
 ./run.sh review-sync 123
 
-# 5. generate report
+# 4. generate report
 ./run.sh report
 ```
 
@@ -61,6 +62,7 @@ Open:
 # sync all open PRs/issues
 curl -X POST "http://127.0.0.1:8080/sync/all-open?per_page=100&max_pages=20"
 # (default) also marks stale locally-open PRs as closed when no longer in GitHub open list
+# (default) also recomputes needs-review / interesting-issues queues
 
 # recompute needs-review / interesting-issues queues
 curl -X POST "http://127.0.0.1:8080/scores/recompute"
@@ -76,6 +78,7 @@ curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run?wait=true"
 
 # generate report
 curl -X POST "http://127.0.0.1:8080/reports/daily/run"
+# (default: refresh=true, recompute=true, prune_missing_open_prs=true)
 
 # latest markdown report
 curl "http://127.0.0.1:8080/reports/daily/latest.md"
@@ -85,8 +88,7 @@ curl "http://127.0.0.1:8080/reports/daily/latest.md"
 
 ```bash
 ./run.sh serve                # start API server
-./run.sh sync-all             # sync all open PRs/issues
-./run.sh recompute            # recompute review/issue signals
+./run.sh sync-all             # sync all open PRs/issues + recompute review/issue signals
 ./run.sh sync                 # sync recent PRs/issues
 ./run.sh report               # generate + print daily report
 ./run.sh review 123           # async deep review for PR 123
@@ -145,7 +147,7 @@ PORT=9090 ./run.sh serve
 - `GET /`, `GET /ui`, `GET /docs`, `GET /healthz`
 - `POST /sync/recent`, `POST /sync/all-open`
 - `POST /scores/recompute`
-- `POST /reports/daily/run`
+- `POST /reports/daily/run` (default refresh path uses sync-all semantics + recompute)
 - `GET /reports/daily/latest`, `GET /reports/daily/latest.md`, `GET /reports/daily`
 - `POST /reviews/pr/{pr_number}/run` (async by default)
 - `POST /reviews/pr/{pr_number}/run-sync`

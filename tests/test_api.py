@@ -269,6 +269,7 @@ def test_run_daily_report_refreshes_by_default() -> None:
     data = resp.json()
     assert data["ok"] is True
     assert data["synced"]["prs"] == 2000
+    assert data["scored"] == {"prs": 0, "issues": 0, "needs_review": 0, "interesting_issues": 0}
     assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None, "prune_missing_open_prs": True}
 
 
@@ -276,7 +277,9 @@ def test_sync_all_open_endpoint() -> None:
     client, _, ingestor, _ = _client()
     resp = client.post("/sync/all-open", params={"per_page": 50, "max_pages": 3})
     assert resp.status_code == 200
-    assert resp.json()["synced"]["prs"] == 150
+    body = resp.json()
+    assert body["synced"]["prs"] == 150
+    assert body["scored"] == {"prs": 0, "issues": 0, "needs_review": 0, "interesting_issues": 0}
     assert ingestor.calls[0] == {"per_page": 50, "max_pages": 3, "since": None, "prune_missing_open_prs": True}
 
 

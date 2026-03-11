@@ -118,6 +118,54 @@ def create_app(
             return True
         return any((r or "").strip().lower() == review_target_login for r in pr.requested_reviewers)
 
+    def _recompute_scores(open_only: bool = True) -> dict[str, int]:
+        prs_scored = 0
+        issues_scored = 0
+        needs_review = 0
+        interesting_issues = 0
+
+        for pr in repo.prs.values():
+            if open_only and pr.state != "open":
+                continue
+            signal = review_need_agent.run(pr)
+            repo.save_review_signal(signal)
+            prs_scored += 1
+            if signal.needs_review:
+                needs_review += 1
+
+        for issue in repo.issues.values():
+            if open_only and issue.state != "open":
+                continue
+            signal = issue_insight_agent.run(issue)
+            repo.save_issue_signal(signal)
+            issues_scored += 1
+            if signal.interesting:
+                interesting_issues += 1
+
+        return {
+            "prs": prs_scored,
+            "issues": issues_scored,
+            "needs_review": needs_review,
+            "interesting_issues": interesting_issues,
+        }
+
+    def _sync_all_open(
+        per_page: int = 100,
+        max_pages: int = 20,
+        prune_missing_open_prs: bool = True,
+        recompute: bool = True,
+    ) -> dict:
+        synced = snapshot_ingestor.sync_recent(
+            per_page=per_page,
+            max_pages=max_pages,
+            since=None,
+            prune_missing_open_prs=prune_missing_open_prs,
+        )
+        resp = {"synced": synced}
+        if recompute:
+            resp["scored"] = _recompute_scores(open_only=True)
+        return resp
+
     def _stats() -> dict:
         needs_review_count = 0
         for signal in repo.review_signals.values():
@@ -674,19 +722,25 @@ def create_app(
         return {"ok": True, "notifications": out.get("notifications", [])}
 
     @app.post("/reports/daily/run")
-    def run_daily_report(refresh: bool = True, per_page: int = 100, max_pages: int = 20) -> dict:
-        synced: dict | None = None
+    def run_daily_report(
+        refresh: bool = True,
+        per_page: int = 100,
+        max_pages: int = 20,
+        prune_missing_open_prs: bool = True,
+        recompute: bool = True,
+    ) -> dict:
+        sync_out: dict | None = None
         if refresh:
-            synced = snapshot_ingestor.sync_recent(
+            sync_out = _sync_all_open(
                 per_page=per_page,
                 max_pages=max_pages,
-                since=None,
-                prune_missing_open_prs=True,
+                prune_missing_open_prs=prune_missing_open_prs,
+                recompute=recompute,
             )
         out = daily_graph.invoke()
         resp = {"ok": True, "notifications": out.get("notifications", [])}
-        if synced is not None:
-            resp["synced"] = synced
+        if sync_out is not None:
+            resp.update(sync_out)
         return resp
 
     @app.post("/sync/recent")
@@ -695,48 +749,19 @@ def create_app(
         return {"ok": True, "synced": synced}
 
     @app.post("/sync/all-open")
-    def sync_all_open(per_page: int = 100, max_pages: int = 20, prune_missing_open_prs: bool = True) -> dict:
-        synced = snapshot_ingestor.sync_recent(
-            per_page=per_page,
-            max_pages=max_pages,
-            since=None,
-            prune_missing_open_prs=prune_missing_open_prs,
-        )
-        return {"ok": True, "synced": synced}
+    def sync_all_open(
+        per_page: int = 100,
+        max_pages: int = 20,
+        prune_missing_open_prs: bool = True,
+        recompute: bool = True,
+    ) -> dict:
+        return {"ok": True, **_sync_all_open(per_page, max_pages, prune_missing_open_prs, recompute)}
 
     @app.post("/scores/recompute")
     def recompute_scores(open_only: bool = True) -> dict:
-        prs_scored = 0
-        issues_scored = 0
-        needs_review = 0
-        interesting_issues = 0
-
-        for pr in repo.prs.values():
-            if open_only and pr.state != "open":
-                continue
-            signal = review_need_agent.run(pr)
-            repo.save_review_signal(signal)
-            prs_scored += 1
-            if signal.needs_review:
-                needs_review += 1
-
-        for issue in repo.issues.values():
-            if open_only and issue.state != "open":
-                continue
-            signal = issue_insight_agent.run(issue)
-            repo.save_issue_signal(signal)
-            issues_scored += 1
-            if signal.interesting:
-                interesting_issues += 1
-
         return {
             "ok": True,
-            "scored": {
-                "prs": prs_scored,
-                "issues": issues_scored,
-                "needs_review": needs_review,
-                "interesting_issues": interesting_issues,
-            },
+            "scored": _recompute_scores(open_only=open_only),
         }
 
     @app.post("/reviews/pr/{pr_number}/run")
