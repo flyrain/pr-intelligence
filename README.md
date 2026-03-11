@@ -19,6 +19,25 @@ Open:
 - `http://127.0.0.1:8080/ui` (dashboard)
 - `http://127.0.0.1:8080/docs` (API docs)
 
+### Which command updates what?
+
+- Update **New/Updated PRs Today** tab data (from latest PR snapshots):
+```bash
+./run.sh sync-all
+```
+
+- Generate/update **Latest Report** tab content:
+```bash
+./run.sh report
+```
+
+- Full refresh (recommended):
+```bash
+./run.sh sync-all
+./run.sh recompute
+./run.sh report
+```
+
 ### 2) Typical workflow
 ```bash
 # 1. sync data
