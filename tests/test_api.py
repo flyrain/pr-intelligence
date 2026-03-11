@@ -372,7 +372,8 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Polaris PR Intelligence" in resp.text
     assert "Latest Report" in resp.text
     assert "PRs Needing Review" in resp.text
-    assert "Deep Review Details" in resp.text
+    assert "Deep PR Reviews" in resp.text
+    assert "No deep reviews yet." in resp.text
     assert "Review Jobs" in resp.text
     assert "Sync All Open PRs/Issues" in resp.text
     assert '<details class="tab-fold">' in resp.text
@@ -466,6 +467,75 @@ def test_ui_new_updated_prs_excludes_closed_prs() -> None:
     assert resp.status_code == 200
     assert "Open PR" in resp.text
     assert "Merged PR" not in resp.text
+
+
+def test_ui_deep_reviews_ordered_by_review_time_desc() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=200,
+            title="Older deep review",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=3,
+            deletions=1,
+            html_url="https://example.com/pr/200",
+            updated_at=now,
+        )
+    )
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=201,
+            title="Newer deep review",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=3,
+            deletions=1,
+            html_url="https://example.com/pr/201",
+            updated_at=now,
+        )
+    )
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=200,
+            generated_at=datetime(2026, 3, 10, 10, 0, tzinfo=timezone.utc),
+            provider="codex_local",
+            model="gpt-5-codex",
+            overall_priority=0.99,
+            overall_recommendation="older",
+        )
+    )
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=201,
+            generated_at=datetime(2026, 3, 11, 10, 0, tzinfo=timezone.utc),
+            provider="claude_code_local",
+            model="claude-code-local",
+            overall_priority=0.10,
+            overall_recommendation="newer",
+        )
+    )
+
+    resp = client.get("/ui")
+    assert resp.status_code == 200
+    assert resp.text.index("priority=0.10") < resp.text.index("priority=0.99")
 
 
 def test_ui_needs_review_folds_after_first_ten() -> None:

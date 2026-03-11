@@ -366,16 +366,16 @@ def create_app(
             if folded_issue_rows
             else ""
         )
-        deep_review_rows = []
-        deep_review_details = []
-        for report in repo.top_pr_review_reports(limit=20):
+        deep_review_entries = []
+        deep_reports = sorted(
+            repo.pr_review_reports.values(),
+            key=lambda r: r.generated_at if r.generated_at.tzinfo else r.generated_at.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        for report in deep_reports[:20]:
             pr = repo.prs.get(report.pr_number)
             if not pr:
                 continue
-            deep_review_rows.append(
-                f"<tr><td><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a></td>"
-                f"<td>{escape(pr.title)}</td><td>{report.overall_priority:.2f}</td><td>{escape(report.provider)}</td></tr>"
-            )
             findings_html = []
             for finding in report.findings:
                 recs = "".join(f"<li>{escape(rec)}</li>" for rec in finding.recommendations)
@@ -387,9 +387,12 @@ def create_app(
                     f"<ul>{recs}</ul>"
                     "</article>"
                 )
-            deep_review_details.append(
+            deep_review_entries.append(
                 "<details class=\"review-detail\">"
-                f"<summary>PR #{pr.number} · priority={report.overall_priority:.2f} · {escape(pr.title)}</summary>"
+                "<summary>"
+                f"<span><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a> · {escape(pr.title)}</span>"
+                f"<span>priority={report.overall_priority:.2f} · {escape(report.provider)}</span>"
+                "</summary>"
                 f"<p class=\"muted\">Provider: {escape(report.provider)} | Model: {escape(report.model)} | Recommendation: {escape(report.overall_recommendation)}</p>"
                 f"{''.join(findings_html) if findings_html else '<p>No findings.</p>'}"
                 "</details>"
@@ -525,6 +528,10 @@ def create_app(
     }}
     .review-detail summary {{
       cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
       font-weight: 600;
       color: var(--accent2);
     }}
@@ -716,13 +723,8 @@ def create_app(
         </article>
         <article class="card" style="margin-top: 14px;">
           <details class="queue-section">
-            <summary>Deep PR Reviews ({len(deep_review_rows)})</summary>
-            <table>
-              <thead><tr><th>PR</th><th>Title</th><th>Priority</th><th>Provider</th></tr></thead>
-              <tbody>{''.join(deep_review_rows) if deep_review_rows else '<tr><td colspan="4">No deep reviews yet.</td></tr>'}</tbody>
-            </table>
-            <h3 style="margin-top:14px;">Deep Review Details</h3>
-            <div>{''.join(deep_review_details) if deep_review_details else '<p class="muted">No detailed findings yet.</p>'}</div>
+            <summary>Deep PR Reviews ({len(deep_review_entries)})</summary>
+            <div>{''.join(deep_review_entries) if deep_review_entries else '<p class="muted">No deep reviews yet.</p>'}</div>
           </details>
         </article>
         <article class="card" style="margin-top: 14px;">
