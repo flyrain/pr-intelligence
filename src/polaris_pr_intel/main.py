@@ -43,6 +43,7 @@ def build_runtime():
         daily_graph,
         pr_review_graph,
         snapshot_ingestor=snapshot_ingestor,
+        settings=settings,
         webhook_secret=settings.github_webhook_secret,
     )
     app.add_event_handler("startup", scheduler.start)

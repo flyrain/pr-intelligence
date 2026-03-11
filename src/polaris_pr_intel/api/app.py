@@ -31,6 +31,7 @@ def create_app(
     daily_graph: DailyReportGraph,
     pr_review_graph: PRReviewGraph,
     snapshot_ingestor: SnapshotIngestor,
+    settings: Settings | None = None,
     webhook_secret: str = "",
 ) -> FastAPI:
     app = FastAPI(title="Polaris PR Intelligence")
@@ -39,13 +40,10 @@ def create_app(
     review_job_queue: queue_module.Queue[str] = queue_module.Queue()
     review_job_workers = max(1, int(os.getenv("REVIEW_JOB_WORKERS", "1")))
     review_job_timeout_sec = int(os.getenv("REVIEW_JOB_TIMEOUT_SEC", "1200"))
-    review_target_login = (
-        os.getenv("REVIEW_TARGET_LOGIN", "").strip().lower()
-        or os.getenv("GITHUB_REVIEWER_LOGIN", "").strip().lower()
-    )
-    default_settings = Settings(github_token="")
-    review_need_agent = getattr(event_graph, "review_need", ReviewNeedAgent(default_settings))
-    issue_insight_agent = getattr(event_graph, "issue_insight", IssueInsightAgent(default_settings))
+    app_settings = settings or Settings(github_token="")
+    review_target_login = app_settings.review_target_login.strip().lower()
+    review_need_agent = getattr(event_graph, "review_need", ReviewNeedAgent(app_settings))
+    issue_insight_agent = getattr(event_graph, "issue_insight", IssueInsightAgent(app_settings))
 
     def _expire_stuck_jobs() -> None:
         now = datetime.now(timezone.utc)
@@ -424,14 +422,14 @@ def create_app(
   <title>Polaris PR Intelligence</title>
   <style>
     :root {{
-      --bg: #f4f7f3;
-      --card: #ffffff;
-      --ink: #1a1f18;
-      --muted: #5f6f5a;
-      --line: #d3ded0;
-      --accent: #0f766e;
-      --accent2: #166534;
-      --good: #14532d;
+      --bg: #0b1220;
+      --card: #101a2c;
+      --ink: #e6edf7;
+      --muted: #93a4bb;
+      --line: #22324b;
+      --accent: #2dd4bf;
+      --accent2: #34d399;
+      --good: #86efac;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -439,17 +437,17 @@ def create_app(
       color: var(--ink);
       font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at 0% 0%, #d9f3e6 0%, transparent 35%),
-        radial-gradient(circle at 100% 20%, #d8ecff 0%, transparent 35%),
+        radial-gradient(circle at 0% 0%, rgba(45, 212, 191, 0.12) 0%, transparent 35%),
+        radial-gradient(circle at 100% 20%, rgba(96, 165, 250, 0.14) 0%, transparent 35%),
         var(--bg);
     }}
     .wrap {{ max-width: 1200px; margin: 0 auto; padding: 24px; }}
     .hero {{
       border: 1px solid var(--line);
-      background: linear-gradient(120deg, #effcf4 0%, #f8fffa 55%, #eef8ff 100%);
+      background: linear-gradient(120deg, #0f1b2f 0%, #112138 55%, #0f2438 100%);
       border-radius: 18px;
       padding: 20px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+      box-shadow: 0 14px 34px rgba(0,0,0,0.35);
     }}
     h1,h2,h3 {{ font-family: "IBM Plex Serif", Georgia, serif; margin: 0 0 12px 0; }}
     h1 {{ font-size: 34px; }}
@@ -468,9 +466,9 @@ def create_app(
     }}
     .btn.primary {{ background: var(--accent); color: white; border-color: var(--accent); }}
     .btn.sync-btn {{
-      background: linear-gradient(135deg, #0f766e 0%, #166534 100%);
-      color: #fff;
-      border-color: #0f766e;
+      background: linear-gradient(135deg, #0d9488 0%, #059669 100%);
+      color: #f8fffe;
+      border-color: #0d9488;
       font-weight: 700;
       box-shadow: 0 6px 16px rgba(15, 118, 110, 0.28);
     }}
@@ -494,6 +492,8 @@ def create_app(
       border-radius: 14px;
       padding: 14px;
     }}
+    a {{ color: #7dd3fc; }}
+    a:visited {{ color: #a5b4fc; }}
     .k {{ font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }}
     .v {{ font-size: 28px; font-weight: 700; margin-top: 4px; }}
     .layout {{
@@ -522,7 +522,7 @@ def create_app(
     .review-detail {{
       border: 1px solid var(--line);
       border-radius: 10px;
-      background: #fbfffd;
+      background: #0d1728;
       padding: 10px 12px;
       margin-bottom: 10px;
     }}
@@ -550,9 +550,9 @@ def create_app(
       border: 1px solid var(--line);
       margin-right: 6px;
     }}
-    .verdict.high {{ background: #ffeaea; border-color: #e5a2a2; }}
-    .verdict.medium {{ background: #fff6e5; border-color: #e6c27a; }}
-    .verdict.low {{ background: #eafaf0; border-color: #9fcdaf; }}
+    .verdict.high {{ background: #3a1f27; border-color: #ad4b64; }}
+    .verdict.medium {{ background: #3b2f1d; border-color: #b88a37; }}
+    .verdict.low {{ background: #183227; border-color: #3f9f70; }}
     .job-status {{
       display: inline-block;
       border-radius: 999px;
@@ -562,9 +562,9 @@ def create_app(
       text-transform: uppercase;
       letter-spacing: .04em;
     }}
-    .job-status-queued {{ background: #f2f4f7; border-color: #cfd6de; }}
-    .job-status-running {{ background: #e6f4ff; border-color: #98c9f0; }}
-    .job-status-done {{ background: #eafaf0; border-color: #9fcdaf; }}
+    .job-status-queued {{ background: #1b2638; border-color: #485d7a; }}
+    .job-status-running {{ background: #0f3042; border-color: #2779a7; }}
+    .job-status-done {{ background: #173628; border-color: #3d8a62; }}
     .action-btn {{
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -583,7 +583,7 @@ def create_app(
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 8px;
-      background: #fbfffd;
+      background: #0d1728;
     }}
     .folded-section > summary {{
       cursor: pointer;

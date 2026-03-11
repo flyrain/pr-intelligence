@@ -6,6 +6,7 @@ import time
 from fastapi.testclient import TestClient
 
 from polaris_pr_intel.api.app import create_app
+from polaris_pr_intel.config import Settings
 from polaris_pr_intel.models import DailyReport, GitHubEvent, IssueSignal, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
 
@@ -76,11 +77,18 @@ class _DummyPRReviewGraph:
         return {"notifications": [f"pr-review:{pr_number}"], "errors": []}
 
 
-def _client() -> tuple[TestClient, InMemoryRepository, _DummyIngestor, _DummyPRReviewGraph]:
+def _client(settings: Settings | None = None) -> tuple[TestClient, InMemoryRepository, _DummyIngestor, _DummyPRReviewGraph]:
     repo = InMemoryRepository()
     ingestor = _DummyIngestor()
     pr_review_graph = _DummyPRReviewGraph(repo)
-    app = create_app(repo, _DummyEventGraph(), _DummyDailyGraph(), pr_review_graph=pr_review_graph, snapshot_ingestor=ingestor)
+    app = create_app(
+        repo,
+        _DummyEventGraph(),
+        _DummyDailyGraph(),
+        pr_review_graph=pr_review_graph,
+        snapshot_ingestor=ingestor,
+        settings=settings or Settings(github_token=""),
+    )
     return TestClient(app), repo, ingestor, pr_review_graph
 
 
@@ -163,7 +171,7 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
 
 def test_needs_review_filters_to_target_login_when_configured(monkeypatch) -> None:
     monkeypatch.setenv("REVIEW_TARGET_LOGIN", "alice")
-    client, repo, _, _ = _client()
+    client, repo, _, _ = _client(Settings(github_token="", review_target_login="alice"))
     now = datetime.now(timezone.utc)
     repo.upsert_pr(
         PullRequestSnapshot(
