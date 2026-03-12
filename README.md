@@ -1,6 +1,6 @@
 # Polaris PR Intelligence (LangGraph + GitHub API)
 
-Python service for monitoring `apache/polaris` pull requests and issues, scoring review priority, running LLM subagent deep reviews, and generating daily reports.
+A service for monitoring a github repo pull requests and issues, scoring review priority, running LLM subagent deep reviews, and generating daily reports.
 
 License: Apache-2.0. See [LICENSE](LICENSE).
 
