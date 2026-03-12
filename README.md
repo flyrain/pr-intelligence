@@ -1,4 +1,4 @@
-# Polaris PR Intelligence (LangGraph + GitHub API)
+# PR Intelligence (LangGraph + GitHub API)
 
 A service for monitoring a github repo pull requests and issues, scoring review priority, running LLM subagent deep reviews, and generating daily reports.
 
