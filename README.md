@@ -2,6 +2,8 @@
 
 Python service for monitoring `apache/polaris` pull requests and issues, scoring review priority, running LLM subagent deep reviews, and generating daily reports.
 
+License: Apache-2.0. See [LICENSE](LICENSE).
+
 ## Quick Start
 
 ### 1) Setup + run
