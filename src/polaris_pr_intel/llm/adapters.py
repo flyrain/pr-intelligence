@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 import tempfile
@@ -8,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from polaris_pr_intel.models import PRSubagentFinding, PullRequestSnapshot
+
+logger = logging.getLogger(__name__)
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -99,6 +102,32 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
     timeout_sec: int = 300
     max_turns: int = 15
     repo_dir: str = ""
+    skill_file: str = ""
+
+    def _load_skill_prompt(self) -> str:
+        """Load skill content from skill_file path if it exists.
+
+        Extracts the review criteria/checks from the skill file and wraps
+        them with a note that the JSON output format from the user prompt
+        takes precedence over any output formatting in the skill.
+        """
+        if not self.skill_file:
+            return ""
+        try:
+            text = Path(self.skill_file).expanduser().read_text(encoding="utf-8")
+            # Strip YAML frontmatter if present
+            if text.startswith("---"):
+                end = text.find("---", 3)
+                if end != -1:
+                    text = text[end + 3:].strip()
+            return (
+                "Use the following as your review checklist. Apply these checks to the PR. "
+                "Ignore any output format instructions in the skill — use the JSON format from the user prompt. "
+                "Keep all text short and casual — write like a teammate, not a report.\n\n"
+                + text
+            )
+        except Exception:
+            return ""
 
     @staticmethod
     def _extract_json_from_result(text: str) -> dict:
@@ -166,22 +195,20 @@ Code diff (patch):
 {truncated_diff}
 ```
 """
-        return f"""You are an expert code reviewer acting as a specialized PR review subagent.
-Your focus area is: {focus_area}
+        return f"""You are a code reviewer focused on: {focus_area}
 
-Analyze the pull request below. You have access to tools — use them to read source files
-for additional context when the diff alone is not enough to assess the change. For example,
-read surrounding code to understand how changed functions are called, check test coverage,
-or verify that security patterns are applied consistently.
+Review the PR below. Use tools to read source files when the diff isn't enough.
 
-After your analysis, respond with ONLY valid JSON matching this schema:
+Write like a teammate leaving PR comments — short, casual, specific. No filler.
+
+Respond with ONLY valid JSON:
 {{
   "agent_name": "{agent_name}",
   "focus_area": "{focus_area}",
   "verdict": "low|medium|high",
   "score": 0.0-1.0,
-  "summary": "2-3 sentence analysis with specific findings from the code",
-  "recommendations": ["specific actionable item referencing code"],
+  "summary": "1-2 short sentences, plain English, no jargon padding",
+  "recommendations": ["short actionable item, e.g. 'add null guard in Foo.java:42'"],
   "confidence": 0.0-1.0
 }}
 
@@ -213,6 +240,12 @@ PR description:
                 "--allowedTools", "Read,Grep,Glob,Bash",
                 "--setting-sources", "user,project,local",
             ]
+            skill_prompt = self._load_skill_prompt()
+            if skill_prompt:
+                logger.info("Loaded review skill (%d chars) from %s", len(skill_prompt), self.skill_file)
+                cmd.extend(["--append-system-prompt", skill_prompt])
+            else:
+                logger.warning("No review skill loaded (skill_file=%r)", self.skill_file)
             if self.model and self.model not in {"claude-code-local", "local-heuristic"}:
                 cmd.extend(["--model", self.model])
             cmd.append(prompt)

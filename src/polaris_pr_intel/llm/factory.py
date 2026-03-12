@@ -38,6 +38,7 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
             timeout_sec=settings.claude_code_timeout_sec,
             max_turns=settings.claude_code_max_turns,
             repo_dir=repo_dir,
+            skill_file=settings.claude_code_skill_file,
         )
     if provider == "codex_local":
         repo_dir = shared_repo_dir
