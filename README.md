@@ -206,9 +206,7 @@ PORT=9090 ./run.sh serve
 - `POST /sync/recent` - Incremental sync of recent PRs/issues
 
 ### Reports
-- `GET /reports/daily/latest` - Latest report with analysis run and artifacts
-- `GET /reports/daily/latest.md` - Latest report as markdown
-- `GET /reports/daily` - Historical reports
+- `GET /reports/daily/latest.md` - Latest generated report (markdown)
 
 ### PR Reviews (Deep Analysis)
 - `POST /reviews/pr/{pr_number}/run` - Async review (returns immediately)

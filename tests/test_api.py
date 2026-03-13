@@ -124,20 +124,6 @@ def test_github_webhook_deduplicates_delivery_id() -> None:
     assert second.json() == {"ok": True, "duplicate": True, "notifications": ["ignored-duplicate"]}
 
 
-def test_daily_report_list_supports_limit_and_offset() -> None:
-    client, repo, _, _ = _client()
-    repo.save_daily_report(DailyReport(date="2026-03-08", markdown="old"))
-    repo.save_daily_report(DailyReport(date="2026-03-09", markdown="newer"))
-    repo.save_daily_report(DailyReport(date="2026-03-10", markdown="newest"))
-
-    resp = client.get("/reports/daily", params={"limit": 2, "offset": 1})
-    data = resp.json()
-
-    assert resp.status_code == 200
-    assert data["ok"] is True
-    assert [item["date"] for item in data["reports"]] == ["2026-03-09", "2026-03-08"]
-
-
 def test_root_and_stats_endpoints_return_useful_summary() -> None:
     client, repo, _, _ = _client()
     repo.upsert_pr(

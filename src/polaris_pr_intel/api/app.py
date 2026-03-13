@@ -880,30 +880,12 @@ def create_app(
         reports = [r.model_dump() for r in repo.top_pr_review_reports(limit=limit)]
         return {"ok": True, "reports": reports}
 
-    @app.get("/reports/daily/latest")
-    def latest_report() -> dict:
-        report = repo.latest_daily_report()
-        analysis_run = repo.latest_analysis_run()
-        if not report:
-            return {"ok": True, "report": None, "artifacts": []}
-        artifacts = analysis_run.artifacts if analysis_run else []
-        return {
-            "ok": True,
-            "report": report.model_dump(),
-            "artifacts": [artifact.model_dump() for artifact in artifacts],
-        }
-
     @app.get("/reports/daily/latest.md", response_class=PlainTextResponse)
     def latest_report_markdown() -> str:
         report = repo.latest_daily_report()
         if not report:
             return "# Polaris PR Intelligence Report\n\nNo report has been generated yet.\n"
         return report.markdown
-
-    @app.get("/reports/daily")
-    def list_reports(limit: int = 30, offset: int = 0) -> dict:
-        reports = [r.model_dump() for r in repo.list_daily_reports(limit=limit, offset=offset)]
-        return {"ok": True, "reports": reports, "limit": limit, "offset": offset}
 
     @app.get("/queues/needs-review", response_model=list[QueueItem])
     def needs_review() -> list[QueueItem]:
