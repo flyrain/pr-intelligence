@@ -45,7 +45,6 @@ Commands:
   review <PR>       Run async review for a PR
   review-sync <PR>  Run sync review for a PR (wait for result)
   bootstrap         Install dependencies (uv if available, else .venv)
-  install           Install/sync project dependencies
 
 Environment:
   HOST   Server bind address (default: 0.0.0.0)
@@ -89,17 +88,6 @@ case "${1:-}" in
             "${PIP_BIN}" install -e .
             echo "Bootstrapped environment in ${VENV_DIR}"
             echo "Run server with: ${CLI_BIN} serve --host ${HOST} --port ${PORT}"
-        fi
-        ;;
-    install)
-        if use_uv_runtime; then
-            uv sync
-        else
-            if [[ ! -x "${PIP_BIN}" ]]; then
-                echo "Missing ${PIP_BIN}. Run './run.sh bootstrap' first."
-                exit 1
-            fi
-            "${PIP_BIN}" install -e .
         fi
         ;;
     *)

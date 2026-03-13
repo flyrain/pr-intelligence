@@ -147,7 +147,6 @@ curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run?wait=true"
 ./run.sh review-sync 123      # sync deep review for PR 123
 ./run.sh run-daily            # run daily graph via CLI
 ./run.sh bootstrap            # install dependencies (uv if available, else .venv)
-./run.sh install              # sync/install dependencies
 ```
 
 Override host/port:
