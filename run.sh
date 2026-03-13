@@ -38,7 +38,6 @@ Usage: ./run.sh <command> [args]
 
 Commands:
   serve             Start the API server
-  run-daily         Generate one daily report via CLI
   refresh           Full refresh: sync + score + analyze + report
   sync              Sync recent open PRs/issues (incremental)
   report            View the latest markdown report (read-only)
@@ -57,9 +56,6 @@ EOF
 case "${1:-}" in
     serve)
         run_cli serve --host "$HOST" --port "$PORT"
-        ;;
-    run-daily)
-        run_cli run-daily
         ;;
     sync)
         curl -s -X POST "$BASE/sync/recent" | (command -v jq >/dev/null 2>&1 && jq || python3 -m json.tool 2>/dev/null || cat)
