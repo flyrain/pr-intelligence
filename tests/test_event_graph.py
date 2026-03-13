@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
@@ -271,3 +271,132 @@ def test_derived_analysis_uses_catalog_routing_method() -> None:
     assert any(item.number == 604 for item in run.items)
     assert llm.catalog_batch_calls == [[604]]
     assert llm.review_calls == []
+
+
+def test_review_now_prefers_recent_unreviewed_prs_and_nudges_stale_ones() -> None:
+    repo = InMemoryRepository()
+    now = datetime.now(timezone.utc)
+    recent = PullRequestSnapshot(
+        number=701,
+        title="Recent PR",
+        body="",
+        state="open",
+        draft=False,
+        author="alice",
+        labels=[],
+        requested_reviewers=["alice"],
+        comments=0,
+        review_comments=0,
+        commits=1,
+        changed_files=2,
+        additions=20,
+        deletions=5,
+        html_url="https://example.com/pr/701",
+        updated_at=now - timedelta(hours=4),
+    )
+    stale = PullRequestSnapshot(
+        number=702,
+        title="Stale PR",
+        body="",
+        state="open",
+        draft=False,
+        author="alice",
+        labels=[],
+        requested_reviewers=["alice"],
+        comments=0,
+        review_comments=0,
+        commits=1,
+        changed_files=2,
+        additions=20,
+        deletions=5,
+        html_url="https://example.com/pr/702",
+        updated_at=now - timedelta(hours=120),
+    )
+    repo.upsert_pr(recent)
+    repo.upsert_pr(stale)
+    repo.save_review_signal(ReviewSignal(pr_number=701, score=3.0, reasons=["requested-you"], needs_review=True))
+    repo.save_review_signal(ReviewSignal(pr_number=702, score=4.0, reasons=["requested-you"], needs_review=True))
+
+    graph = DailyReportGraph(repo, llm=HeuristicLLMAdapter(), settings=_settings())
+    graph.invoke()
+
+    report = repo.latest_daily_report()
+    assert report is not None
+    assert "Recent PR" in report.markdown
+    assert "Stale PR" in report.markdown
+    assert report.markdown.index("Recent PR") < report.markdown.index("## Aging PRs To Nudge")
+
+
+def test_review_now_deprioritizes_already_reviewed_and_draft_prs() -> None:
+    repo = InMemoryRepository()
+    now = datetime.now(timezone.utc)
+    already_reviewed = PullRequestSnapshot(
+        number=703,
+        title="Reviewed PR",
+        body="",
+        state="open",
+        draft=False,
+        author="alice",
+        labels=[],
+        requested_reviewers=["alice"],
+        comments=0,
+        review_comments=3,
+        commits=1,
+        changed_files=2,
+        additions=20,
+        deletions=5,
+        html_url="https://example.com/pr/703",
+        updated_at=now - timedelta(hours=2),
+    )
+    draft_pr = PullRequestSnapshot(
+        number=704,
+        title="Draft PR",
+        body="",
+        state="open",
+        draft=True,
+        author="alice",
+        labels=[],
+        requested_reviewers=["alice"],
+        comments=0,
+        review_comments=0,
+        commits=1,
+        changed_files=2,
+        additions=20,
+        deletions=5,
+        html_url="https://example.com/pr/704",
+        updated_at=now - timedelta(hours=1),
+    )
+    fresh = PullRequestSnapshot(
+        number=705,
+        title="Fresh PR",
+        body="",
+        state="open",
+        draft=False,
+        author="alice",
+        labels=[],
+        requested_reviewers=["alice"],
+        comments=0,
+        review_comments=0,
+        commits=1,
+        changed_files=2,
+        additions=20,
+        deletions=5,
+        html_url="https://example.com/pr/705",
+        updated_at=now - timedelta(hours=1),
+    )
+    for pr in (already_reviewed, draft_pr, fresh):
+        repo.upsert_pr(pr)
+    repo.save_review_signal(ReviewSignal(pr_number=703, score=4.0, reasons=["requested-you"], needs_review=True))
+    repo.save_review_signal(ReviewSignal(pr_number=704, score=5.0, reasons=["requested-you"], needs_review=True))
+    repo.save_review_signal(ReviewSignal(pr_number=705, score=3.0, reasons=["requested-you"], needs_review=True))
+
+    graph = DailyReportGraph(repo, llm=HeuristicLLMAdapter(), settings=_settings())
+    graph.invoke()
+
+    report = repo.latest_daily_report()
+    assert report is not None
+    review_section = report.markdown.split("## Review Now", 1)[1].split("## Recently Updated PRs", 1)[0]
+    assert "Fresh PR" in review_section
+    assert "Draft PR" not in review_section
+    assert "Reviewed PR" in review_section
+    assert review_section.index("Fresh PR") < review_section.index("Reviewed PR")

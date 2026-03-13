@@ -9,6 +9,8 @@ from polaris_pr_intel.store.base import Repository
 
 
 class DerivedAnalysisAgent:
+    recent_attention_hours = 72.0
+
     def __init__(self, repo: Repository, llm: LLMAdapter, settings: Settings) -> None:
         self.repo = repo
         self.llm = llm
@@ -212,14 +214,13 @@ class DerivedAnalysisAgent:
     def _reviewer_queue_markdown(self, items: list[AnalysisItem]) -> str:
         lines = ["# Reviewer Queue Report", "", "## Review Now"]
         review_items = [item for item in items if item.item_type == "pr" and "needs-review" in item.catalogs]
-        review_items.sort(key=lambda item: ("requested-you" not in item.heuristic_reasons, -item.score, item.updated_at.timestamp()))
-        focus_items = review_items[:6]
+        focus_items = self._review_now_items(review_items)[:6]
         if not focus_items:
             lines.append("- No PRs currently require review.")
         else:
             for item in focus_items:
                 lines.append(self._format_attention_pr(item))
-        aging_watch = [item for item in review_items if "aging-prs" in item.catalogs and item not in focus_items][:3]
+        aging_watch = [item for item in review_items if self._should_nudge(item) and item not in focus_items][:3]
         if aging_watch:
             lines += ["", "## Aging PRs To Nudge"]
             for item in aging_watch:
@@ -281,8 +282,13 @@ class DerivedAnalysisAgent:
         return "\n".join(parts)
 
     def _compact_reason(self, item: AnalysisItem) -> str:
+        pr = self.repo.prs.get(item.number) if item.item_type == "pr" else None
+        if pr is not None and pr.draft:
+            return "draft PR, lower priority"
         if "requested-you" in item.heuristic_reasons:
             return "explicitly requested from you"
+        if self._has_prior_review_signal(item):
+            return "already reviewed before, only revisit if changed"
         if "security-risk" in item.catalogs:
             return "security-sensitive change"
         if "release-risk" in item.catalogs:
@@ -301,3 +307,44 @@ class DerivedAnalysisAgent:
             if llm_note:
                 llm_note = f" | note: {llm_note}"
         return f"- [#{item.number}]({item.url}) {item.title} | why: {why}{llm_note}"
+
+    def _review_now_items(self, review_items: list[AnalysisItem]) -> list[AnalysisItem]:
+        candidates = [item for item in review_items if self._should_show_in_review_now(item)]
+        candidates.sort(
+            key=lambda item: (
+                "requested-you" not in item.heuristic_reasons,
+                self._has_prior_review_signal(item),
+                self._is_draft(item),
+                -item.score,
+                -item.updated_at.timestamp(),
+            )
+        )
+        return candidates
+
+    def _should_show_in_review_now(self, item: AnalysisItem) -> bool:
+        if self._is_draft(item):
+            return False
+        if not self._is_recently_changed(item):
+            return False
+        return True
+
+    def _should_nudge(self, item: AnalysisItem) -> bool:
+        return "aging-prs" in item.catalogs or (not self._is_recently_changed(item))
+
+    def _is_recently_changed(self, item: AnalysisItem) -> bool:
+        age_hours = (datetime.now(timezone.utc) - item.updated_at).total_seconds() / 3600
+        return age_hours <= self.recent_attention_hours
+
+    def _has_prior_review_signal(self, item: AnalysisItem) -> bool:
+        if item.item_type != "pr":
+            return False
+        pr = self.repo.prs.get(item.number)
+        if pr is None:
+            return False
+        return pr.review_comments > 0 or self.repo.latest_pr_review_report(item.number) is not None
+
+    def _is_draft(self, item: AnalysisItem) -> bool:
+        if item.item_type != "pr":
+            return False
+        pr = self.repo.prs.get(item.number)
+        return bool(pr and pr.draft)

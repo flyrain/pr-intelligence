@@ -5,6 +5,7 @@ import logging
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.main import _configure_logging, build_runtime
 from polaris_pr_intel.store.repository import InMemoryRepository
+from polaris_pr_intel.config import load_settings
 
 
 class _DummyLLM:
@@ -59,3 +60,15 @@ def test_configure_logging_installs_handler_when_missing(monkeypatch) -> None:
     finally:
         root.handlers = original_handlers
         root.setLevel(original_level)
+
+
+def test_default_review_and_analysis_skill_paths_are_distinct(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.delenv("REVIEW_SKILL_FILE", raising=False)
+    monkeypatch.delenv("ANALYSIS_SKILL_FILE", raising=False)
+
+    settings = load_settings()
+
+    assert settings.review_skill_file != settings.analysis_skill_file
+    assert settings.review_skill_file.endswith("skills/polaris-pr-review/skill.md")
+    assert settings.analysis_skill_file.endswith("skills/polaris-report-analysis/skill.md")

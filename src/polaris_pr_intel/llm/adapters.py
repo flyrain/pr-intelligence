@@ -132,19 +132,20 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
     timeout_sec: int = 300
     max_turns: int = 15
     repo_dir: str = ""
-    skill_file: str = ""
+    review_skill_file: str = ""
+    analysis_skill_file: str = ""
 
-    def _load_skill_prompt(self) -> str:
+    def _load_skill_prompt(self, skill_file: str) -> str:
         """Load skill content from skill_file path if it exists.
 
         Extracts the review criteria/checks from the skill file and wraps
         them with a note that the JSON output format from the user prompt
         takes precedence over any output formatting in the skill.
         """
-        if not self.skill_file:
+        if not skill_file:
             return ""
         try:
-            text = Path(self.skill_file).expanduser().read_text(encoding="utf-8")
+            text = Path(skill_file).expanduser().read_text(encoding="utf-8")
             # Strip YAML frontmatter if present
             if text.startswith("---"):
                 end = text.find("---", 3)
@@ -212,6 +213,7 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
         raise ValueError("No valid finding JSON found in Claude output")
 
     def _build_prompt(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> str:
+        review_skill_prompt = self._load_skill_prompt(self.review_skill_file)
         diff_section = ""
         if pr.diff_text:
             truncated_diff = pr.diff_text[:80_000]
@@ -224,7 +226,7 @@ Code diff (patch):
 {truncated_diff}
 ```
 """
-        return f"""You are a code reviewer focused on: {focus_area}
+        return f"""{review_skill_prompt + chr(10) + chr(10) if review_skill_prompt else ""}You are a code reviewer focused on: {focus_area}
 
 Review the PR below. Use tools to read source files when the diff isn't enough.
 
@@ -261,6 +263,7 @@ PR description:
 {diff_section}"""
 
     def _build_catalog_prompt(self, pr: PullRequestSnapshot) -> str:
+        analysis_skill_prompt = self._load_skill_prompt(self.analysis_skill_file)
         diff_section = ""
         if pr.diff_text:
             truncated_diff = pr.diff_text[:60_000]
@@ -273,7 +276,7 @@ Code diff (patch):
 {truncated_diff}
 ```
 """
-        return f"""You are classifying a pull request for post-sync reporting and catalog routing.
+        return f"""{analysis_skill_prompt + chr(10) + chr(10) if analysis_skill_prompt else ""}You are classifying a pull request for post-sync reporting and catalog routing.
 
 This is not a line-by-line PR review. Your job is to assign the PR to the most relevant reporting catalogs and summarize why.
 
@@ -387,6 +390,7 @@ PR description:
             return super().analyze_catalog_routing_batch(prs)
 
     def _build_catalog_batch_prompt(self, prs: list[PullRequestSnapshot]) -> str:
+        analysis_skill_prompt = self._load_skill_prompt(self.analysis_skill_file)
         sections: list[str] = []
         for pr in prs:
             diff_section = ""
@@ -411,7 +415,7 @@ PR description:
 Description:
 {pr.body[:2000]}{diff_section}"""
             )
-        return """You are classifying multiple pull requests for post-sync reporting and catalog routing.
+        return (analysis_skill_prompt + "\n\n" if analysis_skill_prompt else "") + """You are classifying multiple pull requests for post-sync reporting and catalog routing.
 
 This is a batch routing task, not a PR review task. For each PR, decide which reporting catalogs it belongs in and provide a short operational summary.
 
@@ -465,12 +469,12 @@ Pull requests:
                 "--allowedTools", "Read,Grep,Glob,Bash",
                 "--setting-sources", "user,project,local",
             ]
-            skill_prompt = self._load_skill_prompt()
+            skill_prompt = self._load_skill_prompt(self.review_skill_file)
             if skill_prompt:
-                logger.info("Loaded review skill (%d chars) from %s", len(skill_prompt), self.skill_file)
+                logger.info("Loaded review skill (%d chars) from %s", len(skill_prompt), self.review_skill_file)
                 cmd.extend(["--append-system-prompt", skill_prompt])
             else:
-                logger.warning("No review skill loaded (skill_file=%r)", self.skill_file)
+                logger.warning("No review skill loaded (skill_file=%r)", self.review_skill_file)
             if self.model and self.model not in {"claude-code-local", "local-heuristic"}:
                 cmd.extend(["--model", self.model])
             _log_cli_invocation(self.provider, cmd, prompt)
@@ -496,8 +500,27 @@ class CodexLocalAdapter(HeuristicLLMAdapter):
     timeout_sec: int = 300
     max_turns: int = 15
     repo_dir: str = ""
+    review_skill_file: str = ""
+    analysis_skill_file: str = ""
+
+    def _load_skill_prompt(self, skill_file: str) -> str:
+        if not skill_file:
+            return ""
+        try:
+            text = Path(skill_file).expanduser().read_text(encoding="utf-8")
+            if text.startswith("---"):
+                end = text.find("---", 3)
+                if end != -1:
+                    text = text[end + 3 :].strip()
+            return (
+                "Use the following project skill as guidance. Follow its triage and review rules, "
+                "but obey the task-specific JSON format and scope in the user prompt.\n\n" + text
+            )
+        except Exception:
+            return ""
 
     def _build_prompt(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> str:
+        skill_prompt = self._load_skill_prompt(self.review_skill_file)
         diff_section = ""
         if pr.diff_text:
             truncated_diff = pr.diff_text[:80_000]
@@ -510,7 +533,7 @@ Code diff (patch):
 {truncated_diff}
 ```
 """
-        return f"""You are an expert code reviewer acting as a specialized PR review subagent.
+        return f"""{skill_prompt + chr(10) + chr(10) if skill_prompt else ""}You are an expert code reviewer acting as a specialized PR review subagent.
 Your focus area is: {focus_area}
 
 Analyze the pull request below with concrete, code-specific findings.
@@ -547,6 +570,7 @@ PR description:
 {diff_section}"""
 
     def _build_catalog_prompt(self, pr: PullRequestSnapshot) -> str:
+        skill_prompt = self._load_skill_prompt(self.analysis_skill_file)
         diff_section = ""
         if pr.diff_text:
             truncated_diff = pr.diff_text[:60_000]
@@ -559,7 +583,7 @@ Code diff (patch):
 {truncated_diff}
 ```
 """
-        return f"""You are analyzing a pull request for post-sync report generation and catalog routing.
+        return f"""{skill_prompt + chr(10) + chr(10) if skill_prompt else ""}You are analyzing a pull request for post-sync report generation and catalog routing.
 
 Do not perform a normal PR review. Focus on triage, risk bucketing, and which downstream catalogs should include this PR.
 
@@ -654,6 +678,7 @@ PR description:
             return super().analyze_catalog_routing_batch(prs)
 
     def _build_catalog_batch_prompt(self, prs: list[PullRequestSnapshot]) -> str:
+        skill_prompt = self._load_skill_prompt(self.analysis_skill_file)
         sections: list[str] = []
         for pr in prs:
             diff_section = ""
@@ -678,7 +703,7 @@ PR description:
 Description:
 {pr.body[:2000]}{diff_section}"""
             )
-        return """You are analyzing multiple pull requests for post-sync report generation and catalog routing.
+        return (skill_prompt + "\n\n" if skill_prompt else "") + """You are analyzing multiple pull requests for post-sync report generation and catalog routing.
 
 This is a batch routing task, not a normal PR review. For each PR, decide which reports/catalogs should include it and give a short routing summary.
 

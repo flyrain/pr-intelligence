@@ -29,6 +29,8 @@ class Settings:
     claude_code_cmd: str = "claude"
     claude_code_timeout_sec: int = 300
     claude_code_max_turns: int = 15
+    review_skill_file: str = ""
+    analysis_skill_file: str = ""
     claude_code_skill_file: str = ""
     local_review_repo_dir: str = ""
     codex_cmd: str = "codex"
@@ -89,9 +91,25 @@ def load_settings() -> Settings:
         claude_code_cmd=os.getenv("CLAUDE_CODE_CMD", "claude"),
         claude_code_timeout_sec=_int_env("CLAUDE_CODE_TIMEOUT_SEC", 300),
         claude_code_max_turns=_int_env("CLAUDE_CODE_MAX_TURNS", 15),
+        review_skill_file=os.getenv(
+            "REVIEW_SKILL_FILE",
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "skills", "polaris-pr-review", "skill.md"),
+        ),
+        analysis_skill_file=os.getenv(
+            "ANALYSIS_SKILL_FILE",
+            os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "skills",
+                "polaris-report-analysis",
+                "skill.md",
+            ),
+        ),
         claude_code_skill_file=os.getenv(
             "CLAUDE_CODE_SKILL_FILE",
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "skills", "polaris-pr-review", "skill.md"),
+            os.getenv(
+                "REVIEW_SKILL_FILE",
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "skills", "polaris-pr-review", "skill.md"),
+            ),
         ),
         local_review_repo_dir=(
             os.getenv("LOCAL_REVIEW_REPO_DIR", "").strip()
