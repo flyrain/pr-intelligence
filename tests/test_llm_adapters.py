@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 
 import pytest
@@ -51,6 +52,36 @@ def test_claude_code_local_adapter_parses_json(monkeypatch) -> None:
     assert finding.focus_area == "security and permission model"
     assert finding.verdict == "high"
     assert finding.score == 0.9
+
+
+def test_claude_code_local_adapter_catalog_prompt_mentions_routing() -> None:
+    adapter = ClaudeCodeLocalAdapter(command="claude")
+    prompt = adapter._build_catalog_prompt(_pr())
+
+    assert "post-sync reporting and catalog routing" in prompt
+    assert "This is not a line-by-line PR review." in prompt
+    assert '"agent_name": "catalog-router"' in prompt
+
+
+def test_claude_code_local_adapter_logs_invocation_command(monkeypatch, caplog) -> None:
+    adapter = ClaudeCodeLocalAdapter(command="claude", model="claude-local")
+
+    def _fake_run(*args, **kwargs):
+        class R:
+            stdout = """```json
+{"agent_name":"x","focus_area":"x","verdict":"high","score":0.9,"summary":"critical path changed","recommendations":["review auth"],"confidence":0.8}
+```"""
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    caplog.set_level(logging.INFO)
+
+    adapter.analyze_catalog_routing(_pr())
+
+    assert "Invoking claude_code_local LLM command:" in caplog.text
+    assert "claude --print --dangerously-skip-permissions --output-format json" in caplog.text
+    assert "<prompt>" in caplog.text
 
 
 def test_claude_code_local_adapter_falls_back_on_failure(monkeypatch) -> None:
@@ -125,6 +156,34 @@ def test_codex_local_adapter_parses_json(monkeypatch) -> None:
     assert finding.agent_name == "code-risk"
     assert finding.verdict == "medium"
     assert finding.score == 0.55
+
+
+def test_codex_local_adapter_catalog_prompt_mentions_routing() -> None:
+    adapter = CodexLocalAdapter(command="codex")
+    prompt = adapter._build_catalog_prompt(_pr())
+
+    assert "post-sync report generation and catalog routing" in prompt
+    assert "Do not perform a normal PR review." in prompt
+    assert '"agent_name": "catalog-router"' in prompt
+
+
+def test_codex_local_adapter_logs_invocation_command(monkeypatch, caplog) -> None:
+    adapter = CodexLocalAdapter(command="codex", model="gpt-5-codex")
+
+    def _fake_run(*args, **kwargs):
+        class R:
+            stdout = '{"verdict":"medium","score":0.55,"summary":"moderate risk in changed auth path","recommendations":["add coverage for auth edge cases"],"confidence":0.7}'
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    caplog.set_level(logging.INFO)
+
+    adapter.analyze_catalog_routing(_pr())
+
+    assert "Invoking codex_local LLM command:" in caplog.text
+    assert "codex exec --full-auto --skip-git-repo-check --output-last-message" in caplog.text
+    assert "<prompt>" in caplog.text
 
 
 def test_factory_builds_codex_local_adapter(monkeypatch) -> None:

@@ -4,16 +4,18 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from polaris_pr_intel.agents.daily_reporter import DailyReporterAgent
+from polaris_pr_intel.agents.derived_analysis import DerivedAnalysisAgent
+from polaris_pr_intel.config import Settings
+from polaris_pr_intel.llm.base import LLMAdapter
 from polaris_pr_intel.graphs.state import PRIntelState
 from polaris_pr_intel.publish.console import ConsolePublisher
 from polaris_pr_intel.store.base import Repository
 
 
 class DailyReportGraph:
-    def __init__(self, repo: Repository) -> None:
+    def __init__(self, repo: Repository, llm: LLMAdapter, settings: Settings) -> None:
         self.repo = repo
-        self.reporter = DailyReporterAgent()
+        self.analysis = DerivedAnalysisAgent(repo, llm=llm, settings=settings)
         self.publisher = ConsolePublisher()
         self.graph = self._build()
 
@@ -28,9 +30,10 @@ class DailyReportGraph:
         return g.compile()
 
     def generate_report(self, state: PRIntelState) -> dict[str, Any]:
-        report = self.reporter.run(self.repo)
+        analysis_run, report = self.analysis.run()
+        self.repo.save_analysis_run(analysis_run)
         self.repo.save_daily_report(report)
-        return {"daily_report": report}
+        return {"analysis_run": analysis_run, "daily_report": report}
 
     def publish_report(self, state: PRIntelState) -> dict[str, Any]:
         report = state["daily_report"]

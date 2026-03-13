@@ -34,6 +34,7 @@ class Settings:
     codex_cmd: str = "codex"
     codex_timeout_sec: int = 300
     codex_max_turns: int = 15
+    analysis_top_slice_limit: int = 10
 
 
 def _float_env(name: str, default: float) -> float:
@@ -100,4 +101,5 @@ def load_settings() -> Settings:
         codex_cmd=os.getenv("CODEX_CMD", "codex"),
         codex_timeout_sec=_int_env("CODEX_TIMEOUT_SEC", 300),
         codex_max_turns=_int_env("CODEX_MAX_TURNS", 15),
+        analysis_top_slice_limit=_int_env("ANALYSIS_TOP_SLICE_LIMIT", 10),
     )

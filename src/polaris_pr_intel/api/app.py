@@ -20,7 +20,7 @@ from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
-from polaris_pr_intel.models import GitHubEvent, QueueItem
+from polaris_pr_intel.models import AnalysisItem, GitHubEvent, QueueItem
 from polaris_pr_intel.store.base import Repository
 
 
@@ -41,6 +41,12 @@ def create_app(
     review_job_workers = max(1, int(os.getenv("REVIEW_JOB_WORKERS", "1")))
     review_job_timeout_sec = int(os.getenv("REVIEW_JOB_TIMEOUT_SEC", "1200"))
     app_settings = settings or Settings(github_token="")
+    configured_llm_model = (app_settings.llm_model or "").strip()
+    configured_llm_display = (
+        f"{app_settings.llm_provider} / {configured_llm_model}"
+        if configured_llm_model
+        else app_settings.llm_provider
+    )
     review_target_login = app_settings.review_target_login.strip().lower()
     review_need_agent = getattr(event_graph, "review_need", ReviewNeedAgent(app_settings))
     issue_insight_agent = getattr(event_graph, "issue_insight", IssueInsightAgent(app_settings))
@@ -154,7 +160,6 @@ def create_app(
         per_page: int = 100,
         max_pages: int = 20,
         prune_missing_open_prs: bool = True,
-        recompute: bool = True,
     ) -> dict:
         synced = snapshot_ingestor.sync_recent(
             per_page=per_page,
@@ -162,10 +167,13 @@ def create_app(
             since=None,
             prune_missing_open_prs=prune_missing_open_prs,
         )
-        resp = {"synced": synced}
-        if recompute:
-            resp["scored"] = _recompute_scores(open_only=True)
-        return resp
+        return {"synced": synced}
+
+    def _latest_analysis_items() -> list[AnalysisItem]:
+        latest_run = repo.latest_analysis_run()
+        if not latest_run:
+            return []
+        return latest_run.items
 
     def _execute_review(pr_number: int) -> dict:
         if pr_number not in repo.prs:
@@ -230,6 +238,7 @@ def create_app(
             "review_signals": len(repo.review_signals),
             "issue_signals": len(repo.issue_signals),
             "deep_pr_reviews": len(repo.pr_review_reports),
+            "analysis_runs": len(repo.analysis_runs),
             "needs_review_queue": needs_review_count,
             "interesting_issues_queue": interesting_issue_count,
             "daily_reports": len(repo.daily_reports),
@@ -613,14 +622,21 @@ def create_app(
       btn.disabled = true;
       btn.textContent = "Syncing...";
       try {{
-        const res = await fetch("/sync/all-open?per_page=100&max_pages=20", {{ method: "POST" }});
-        const data = await res.json();
-        if (data.ok) {{
+        const syncRes = await fetch("/sync/all-open?per_page=100&max_pages=20", {{ method: "POST" }});
+        const syncData = await syncRes.json();
+        if (!syncData.ok) {{
+          btn.textContent = "Failed";
+          console.error("sync all-open failed", syncData);
+          return;
+        }}
+        const analysisRes = await fetch("/analysis/run", {{ method: "POST" }});
+        const analysisData = await analysisRes.json();
+        if (analysisData.ok) {{
           btn.textContent = "Synced";
           setTimeout(() => window.location.reload(), 600);
         }} else {{
           btn.textContent = "Failed";
-          console.error("sync all-open failed", data);
+          console.error("analysis run failed", analysisData);
         }}
       }} catch (e) {{
         btn.textContent = "Failed";
@@ -659,13 +675,14 @@ def create_app(
   </script>
 </head>
 <body>
-  <div class="wrap">
-    <section class="hero">
-      <h1>Polaris PR Intelligence</h1>
-      <p class="muted">Daily PR/issue triage dashboard for apache/polaris.</p>
-      <div class="actions">
-        <a class="btn primary" href="/docs">Open API Docs</a>
-        <button class="btn sync-btn" type="button" onclick="syncAllOpen(this)">Sync All Open PRs/Issues</button>
+	  <div class="wrap">
+	    <section class="hero">
+	      <h1>Polaris PR Intelligence</h1>
+	      <p class="muted">Daily PR/issue triage dashboard for apache/polaris.</p>
+	      <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
+	      <div class="actions">
+	        <a class="btn primary" href="/docs">Open API Docs</a>
+	        <button class="btn sync-btn" type="button" onclick="syncAllOpen(this)">Sync All Open PRs/Issues</button>
         <a class="btn" href="/reports/daily/latest.md">Latest Report Markdown</a>
         <a class="btn" href="/queues/needs-review">Needs Review JSON</a>
         <a class="btn" href="/queues/interesting-issues">Interesting Issues JSON</a>
@@ -783,12 +800,21 @@ def create_app(
                 per_page=per_page,
                 max_pages=max_pages,
                 prune_missing_open_prs=prune_missing_open_prs,
-                recompute=recompute,
             )
+        scored = _recompute_scores(open_only=True) if recompute else None
         out = daily_graph.invoke()
-        resp = {"ok": True, "notifications": out.get("notifications", [])}
+        analysis_run = out.get("analysis_run")
+        report = out.get("daily_report")
+        resp = {
+            "ok": True,
+            "notifications": out.get("notifications", []),
+            "report": report.model_dump() if report else None,
+            "analysis_run": analysis_run.model_dump() if analysis_run else None,
+        }
         if sync_out is not None:
             resp.update(sync_out)
+        if scored is not None:
+            resp["scored"] = scored
         return resp
 
     @app.post("/sync/recent")
@@ -801,9 +827,44 @@ def create_app(
         per_page: int = 100,
         max_pages: int = 20,
         prune_missing_open_prs: bool = True,
-        recompute: bool = True,
     ) -> dict:
-        return {"ok": True, **_sync_all_open(per_page, max_pages, prune_missing_open_prs, recompute)}
+        return {"ok": True, **_sync_all_open(per_page, max_pages, prune_missing_open_prs)}
+
+    @app.post("/analysis/run")
+    def run_analysis() -> dict:
+        scored = _recompute_scores(open_only=True)
+        out = daily_graph.invoke()
+        analysis_run = out.get("analysis_run")
+        report = out.get("daily_report")
+        return {
+            "ok": True,
+            "notifications": out.get("notifications", []),
+            "scored": scored,
+            "analysis_run": analysis_run.model_dump() if analysis_run else None,
+            "report": report.model_dump() if report else None,
+        }
+
+    @app.get("/analysis/latest")
+    def latest_analysis() -> dict:
+        run = repo.latest_analysis_run()
+        return {"ok": True, "analysis_run": run.model_dump() if run else None}
+
+    @app.get("/analysis/runs")
+    def list_analysis_runs(limit: int = 30, offset: int = 0) -> dict:
+        runs = [run.model_dump() for run in repo.list_analysis_runs(limit=limit, offset=offset)]
+        return {"ok": True, "runs": runs, "limit": limit, "offset": offset}
+
+    @app.get("/catalogs")
+    def list_catalogs() -> dict:
+        run = repo.latest_analysis_run()
+        if not run:
+            return {"ok": True, "catalogs": {}, "items": []}
+        return {"ok": True, "catalogs": run.catalog_counts, "items": [item.model_dump() for item in run.items]}
+
+    @app.get("/catalogs/{catalog_name}")
+    def catalog_items(catalog_name: str) -> dict:
+        items = [item.model_dump() for item in _latest_analysis_items() if catalog_name in item.catalogs]
+        return {"ok": True, "catalog": catalog_name, "items": items}
 
     @app.post("/scores/recompute")
     def recompute_scores(open_only: bool = True) -> dict:
@@ -915,9 +976,15 @@ def create_app(
     @app.get("/reports/daily/latest")
     def latest_report() -> dict:
         report = repo.latest_daily_report()
+        analysis_run = repo.latest_analysis_run()
         if not report:
-            return {"ok": True, "report": None}
-        return {"ok": True, "report": report.model_dump()}
+            return {"ok": True, "report": None, "artifacts": []}
+        artifacts = analysis_run.artifacts if analysis_run else []
+        return {
+            "ok": True,
+            "report": report.model_dump(),
+            "artifacts": [artifact.model_dump() for artifact in artifacts],
+        }
 
     @app.get("/reports/daily/latest.md", response_class=PlainTextResponse)
     def latest_report_markdown() -> str:
@@ -930,6 +997,13 @@ def create_app(
     def list_reports(limit: int = 30, offset: int = 0) -> dict:
         reports = [r.model_dump() for r in repo.list_daily_reports(limit=limit, offset=offset)]
         return {"ok": True, "reports": reports, "limit": limit, "offset": offset}
+
+    @app.get("/reports/artifacts/latest")
+    def latest_report_artifacts() -> dict:
+        run = repo.latest_analysis_run()
+        if not run:
+            return {"ok": True, "artifacts": []}
+        return {"ok": True, "artifacts": [artifact.model_dump() for artifact in run.artifacts]}
 
     @app.get("/queues/needs-review", response_model=list[QueueItem])
     def needs_review() -> list[QueueItem]:

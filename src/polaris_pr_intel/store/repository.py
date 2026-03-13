@@ -3,7 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from polaris_pr_intel.models import DailyReport, IssueSignal, IssueSnapshot, PRReviewReport, PRSummary, PullRequestSnapshot, ReviewSignal
+from polaris_pr_intel.models import (
+    AnalysisRun,
+    DailyReport,
+    IssueSignal,
+    IssueSnapshot,
+    PRReviewReport,
+    PRSummary,
+    PullRequestSnapshot,
+    ReviewSignal,
+)
 
 
 @dataclass
@@ -15,6 +24,7 @@ class InMemoryRepository:
     issue_signals: dict[int, IssueSignal] = field(default_factory=dict)
     pr_review_reports: dict[int, PRReviewReport] = field(default_factory=dict)
     daily_reports: list[DailyReport] = field(default_factory=list)
+    analysis_runs: list[AnalysisRun] = field(default_factory=list)
     processed_events: set[str] = field(default_factory=set)
     last_sync_at: datetime | None = None
 
@@ -39,6 +49,9 @@ class InMemoryRepository:
     def save_daily_report(self, report: DailyReport) -> None:
         self.daily_reports.append(report)
 
+    def save_analysis_run(self, run: AnalysisRun) -> None:
+        self.analysis_runs.append(run)
+
     def latest_daily_report(self) -> DailyReport | None:
         return self.daily_reports[-1] if self.daily_reports else None
 
@@ -49,6 +62,17 @@ class InMemoryRepository:
             limit = 1
         reports = list(reversed(self.daily_reports))
         return reports[offset : offset + limit]
+
+    def latest_analysis_run(self) -> AnalysisRun | None:
+        return self.analysis_runs[-1] if self.analysis_runs else None
+
+    def list_analysis_runs(self, limit: int = 30, offset: int = 0) -> list[AnalysisRun]:
+        if offset < 0:
+            offset = 0
+        if limit < 1:
+            limit = 1
+        runs = list(reversed(self.analysis_runs))
+        return runs[offset : offset + limit]
 
     def latest_pr_review_report(self, pr_number: int) -> PRReviewReport | None:
         return self.pr_review_reports.get(pr_number)

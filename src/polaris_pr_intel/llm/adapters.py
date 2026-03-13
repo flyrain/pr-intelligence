@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -15,6 +16,15 @@ logger = logging.getLogger(__name__)
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _log_cli_invocation(provider: str, cmd: list[str], prompt: str) -> None:
+    logger.info(
+        "Invoking %s LLM command: %s [prompt_chars=%d]",
+        provider,
+        shlex.join([*cmd, "<prompt>"]),
+        len(prompt),
+    )
 
 
 @dataclass
@@ -54,6 +64,18 @@ class HeuristicLLMAdapter:
         else:
             verdict = "low"
 
+        tags: list[str] = []
+        suggested_catalogs: list[str] = []
+        title_body = f"{pr.title}\n{pr.body}".lower()
+        if "security" in title_body or "permission" in title_body:
+            tags.append("security")
+            suggested_catalogs.append("security-risk")
+        if churn > 400 or pr.changed_files > 25:
+            tags.append("large-change")
+            suggested_catalogs.append("release-risk")
+        if pr.requested_reviewers:
+            suggested_catalogs.append("needs-review")
+
         recommendations = [f"Review {focus_area} changes in touched files."]
         if pr.requested_reviewers:
             recommendations.append(f"Confirm requested reviewers: {', '.join(pr.requested_reviewers)}.")
@@ -69,8 +91,16 @@ class HeuristicLLMAdapter:
             score=score,
             summary=summary,
             recommendations=recommendations,
+            tags=list(dict.fromkeys(tags)),
+            suggested_catalogs=list(dict.fromkeys(suggested_catalogs)),
             confidence=0.65,
         )
+
+    def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
+        return self.analyze_pr("catalog-router", "catalog routing and prioritization", pr)
+
+    def analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]) -> dict[int, PRSubagentFinding]:
+        return {pr.number: self.analyze_catalog_routing(pr) for pr in prs}
 
 
 @dataclass
@@ -130,39 +160,33 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
             return ""
 
     @staticmethod
-    def _extract_json_from_result(text: str) -> dict:
-        """Extract JSON finding from Claude's output.
+    def _extract_json_payload(text: str) -> object:
+        """Extract JSON payload from model output.
 
         With --output-format json, Claude returns a JSON object with a "result"
         field containing the final text response.  We look for a JSON object
-        matching our schema inside that text.
+        or array payload inside that text.
         """
-        # First try: the whole output is the --output-format json envelope.
         try:
             envelope = json.loads(text)
             if isinstance(envelope, dict) and "result" in envelope:
                 text = envelope["result"]
+            else:
+                return envelope
         except (json.JSONDecodeError, TypeError):
             pass
 
-        # Try to parse the (possibly extracted) text directly.
         try:
-            obj = json.loads(text.strip())
-            if isinstance(obj, dict) and "verdict" in obj:
-                return obj
+            return json.loads(text.strip())
         except (json.JSONDecodeError, TypeError):
             pass
 
-        # Look for a JSON code block in the response.
         for match in re.finditer(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL):
             try:
-                obj = json.loads(match.group(1).strip())
-                if isinstance(obj, dict) and "verdict" in obj:
-                    return obj
+                return json.loads(match.group(1).strip())
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        # Last resort: find first { ... } blob that looks right.
         brace_start = text.find("{")
         if brace_start >= 0:
             depth = 0
@@ -173,13 +197,18 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
                     depth -= 1
                     if depth == 0:
                         try:
-                            obj = json.loads(text[brace_start : i + 1])
-                            if isinstance(obj, dict) and "verdict" in obj:
-                                return obj
+                            return json.loads(text[brace_start : i + 1])
                         except (json.JSONDecodeError, TypeError):
                             pass
                         break
 
+        raise ValueError("No valid JSON payload found in model output")
+
+    @classmethod
+    def _extract_json_from_result(cls, text: str) -> dict:
+        payload = cls._extract_json_payload(text)
+        if isinstance(payload, dict) and "verdict" in payload:
+            return payload
         raise ValueError("No valid finding JSON found in Claude output")
 
     def _build_prompt(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> str:
@@ -209,8 +238,67 @@ Respond with ONLY valid JSON:
   "score": 0.0-1.0,
   "summary": "1-2 short sentences, plain English, no jargon padding",
   "recommendations": ["short actionable item, e.g. 'add null guard in Foo.java:42'"],
+  "tags": ["optional-short-tag"],
+  "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
   "confidence": 0.0-1.0
 }}
+
+Pull request metadata:
+- number: {pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+PR description:
+{pr.body[:4000]}
+{diff_section}"""
+
+    def _build_catalog_prompt(self, pr: PullRequestSnapshot) -> str:
+        diff_section = ""
+        if pr.diff_text:
+            truncated_diff = pr.diff_text[:60_000]
+            if len(pr.diff_text) > 60_000:
+                truncated_diff += "\n... (diff truncated)"
+            diff_section = f"""
+
+Code diff (patch):
+```
+{truncated_diff}
+```
+"""
+        return f"""You are classifying a pull request for post-sync reporting and catalog routing.
+
+This is not a line-by-line PR review. Your job is to assign the PR to the most relevant reporting catalogs and summarize why.
+
+Prefer routing and triage signals over code review commentary. Keep the summary short and operational.
+
+Respond with ONLY valid JSON:
+{{
+  "agent_name": "catalog-router",
+  "focus_area": "catalog routing and prioritization",
+  "verdict": "low|medium|high",
+  "score": 0.0-1.0,
+  "summary": "1-2 short sentences focused on routing/triage, not review comments",
+  "recommendations": ["short triage action, e.g. 'put this in release-risk digest'"],
+  "tags": ["optional-short-tag"],
+  "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
+  "confidence": 0.0-1.0
+}}
+
+Routing guidance:
+- `needs-review`: human review should be prioritized
+- `aging-prs`: open and stale
+- `security-risk`: auth, permissions, secrets, trust boundaries, security-sensitive changes
+- `release-risk`: broad changes, risky diffs, regression potential, rollout concerns
+- `recently-updated`: important fresh activity today
+- `interesting-issues`: not applicable for PR routing unless clearly justified
 
 Pull request metadata:
 - number: {pr.number}
@@ -232,6 +320,143 @@ PR description:
     def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_prompt(agent_name, focus_area, pr)
         try:
+            return self._run_prompt(prompt, agent_name, focus_area, pr)
+        except Exception as exc:
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            if "Failed to authenticate" in detail or "API Error: 401" in detail or "Not logged in" in detail:
+                raise RuntimeError(
+                    "claude-code-local authentication failed. Run `claude auth login` (or `claude setup-token`) and retry."
+                ) from exc
+            fallback = super().analyze_pr(agent_name, focus_area, pr)
+            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
+            return fallback
+
+    def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
+        prompt = self._build_catalog_prompt(pr)
+        try:
+            return self._run_prompt(prompt, "catalog-router", "catalog routing and prioritization", pr)
+        except Exception as exc:
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            if "Failed to authenticate" in detail or "API Error: 401" in detail or "Not logged in" in detail:
+                raise RuntimeError(
+                    "claude-code-local authentication failed. Run `claude auth login` (or `claude setup-token`) and retry."
+                ) from exc
+            fallback = super().analyze_catalog_routing(pr)
+            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
+            return fallback
+
+    def analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]) -> dict[int, PRSubagentFinding]:
+        if not prs:
+            return {}
+        prompt = self._build_catalog_batch_prompt(prs)
+        try:
+            payload = self._run_raw_prompt(prompt)
+            findings = payload.get("findings") if isinstance(payload, dict) else None
+            if not isinstance(findings, dict):
+                raise ValueError("Missing findings object in batch result")
+            results: dict[int, PRSubagentFinding] = {}
+            for pr in prs:
+                raw_finding = findings.get(str(pr.number))
+                if not isinstance(raw_finding, dict):
+                    continue
+                raw_finding["agent_name"] = "catalog-router"
+                raw_finding["focus_area"] = "catalog routing and prioritization"
+                finding = PRSubagentFinding.model_validate(raw_finding)
+                finding.score = _clamp(finding.score, 0.0, 1.0)
+                finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+                results[pr.number] = finding
+            return results
+        except Exception as exc:
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            if "Failed to authenticate" in detail or "API Error: 401" in detail or "Not logged in" in detail:
+                raise RuntimeError(
+                    "claude-code-local authentication failed. Run `claude auth login` (or `claude setup-token`) and retry."
+                ) from exc
+            return super().analyze_catalog_routing_batch(prs)
+
+    def _build_catalog_batch_prompt(self, prs: list[PullRequestSnapshot]) -> str:
+        sections: list[str] = []
+        for pr in prs:
+            diff_section = ""
+            if pr.diff_text:
+                truncated_diff = pr.diff_text[:20_000]
+                if len(pr.diff_text) > 20_000:
+                    truncated_diff += "\n... (diff truncated)"
+                diff_section = f"\nDiff:\n```\n{truncated_diff}\n```"
+            sections.append(
+                f"""PR #{pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+Description:
+{pr.body[:2000]}{diff_section}"""
+            )
+        return """You are classifying multiple pull requests for post-sync reporting and catalog routing.
+
+This is a batch routing task, not a PR review task. For each PR, decide which reporting catalogs it belongs in and provide a short operational summary.
+
+Respond with ONLY valid JSON in this shape:
+{
+  "findings": {
+    "<pr_number>": {
+      "verdict": "low|medium|high",
+      "score": 0.0-1.0,
+      "summary": "1-2 short routing sentences",
+      "recommendations": ["short triage action"],
+      "tags": ["optional-short-tag"],
+      "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
+      "confidence": 0.0-1.0
+    }
+  }
+}
+
+Routing guidance:
+- `needs-review`: human review should be prioritized
+- `aging-prs`: open and stale
+- `security-risk`: auth, permissions, secrets, trust boundaries, security-sensitive changes
+- `release-risk`: broad changes, risky diffs, regression potential, rollout concerns
+- `recently-updated`: important fresh activity today
+- `interesting-issues`: generally not applicable for PR routing
+
+Pull requests:
+""" + "\n\n".join(sections)
+
+    def _run_prompt(self, prompt: str, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
+        try:
+            data = self._run_raw_prompt(prompt)
+            if not isinstance(data, dict):
+                raise ValueError("Expected JSON object from model")
+            data["agent_name"] = agent_name
+            data["focus_area"] = focus_area
+            finding = PRSubagentFinding.model_validate(data)
+            finding.score = _clamp(finding.score, 0.0, 1.0)
+            finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+            return finding
+        except Exception:
+            raise
+
+    def _run_raw_prompt(self, prompt: str) -> object:
+        try:
             cmd = [
                 self.command,
                 "--print",
@@ -248,6 +473,7 @@ PR description:
                 logger.warning("No review skill loaded (skill_file=%r)", self.skill_file)
             if self.model and self.model not in {"claude-code-local", "local-heuristic"}:
                 cmd.extend(["--model", self.model])
+            _log_cli_invocation(self.provider, cmd, prompt)
             cmd.append(prompt)
             proc = subprocess.run(
                 cmd,
@@ -257,26 +483,9 @@ PR description:
                 timeout=self.timeout_sec,
                 cwd=self.repo_dir or None,
             )
-            data = self._extract_json_from_result(proc.stdout)
-            data["agent_name"] = agent_name
-            data["focus_area"] = focus_area
-            finding = PRSubagentFinding.model_validate(data)
-            finding.score = _clamp(finding.score, 0.0, 1.0)
-            finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
-            return finding
-        except Exception as exc:
-            detail = str(exc)
-            if isinstance(exc, subprocess.CalledProcessError):
-                stderr = (exc.stderr or "").strip().replace("\n", " ")
-                stdout = (exc.stdout or "").strip().replace("\n", " ")
-                detail = stderr or stdout or detail
-            if "Failed to authenticate" in detail or "API Error: 401" in detail or "Not logged in" in detail:
-                raise RuntimeError(
-                    "claude-code-local authentication failed. Run `claude auth login` (or `claude setup-token`) and retry."
-                ) from exc
-            fallback = super().analyze_pr(agent_name, focus_area, pr)
-            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
-            return fallback
+            return self._extract_json_payload(proc.stdout)
+        except Exception:
+            raise
 
 
 @dataclass
@@ -315,6 +524,8 @@ Return ONLY valid JSON:
   "score": 0.0-1.0,
   "summary": "2-3 sentence analysis with specific findings from the code",
   "recommendations": ["specific actionable item referencing code"],
+  "tags": ["optional-short-tag"],
+  "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
   "confidence": 0.0-1.0
 }}
 
@@ -335,8 +546,183 @@ PR description:
 {pr.body[:4000]}
 {diff_section}"""
 
+    def _build_catalog_prompt(self, pr: PullRequestSnapshot) -> str:
+        diff_section = ""
+        if pr.diff_text:
+            truncated_diff = pr.diff_text[:60_000]
+            if len(pr.diff_text) > 60_000:
+                truncated_diff += "\n... (diff truncated)"
+            diff_section = f"""
+
+Code diff (patch):
+```
+{truncated_diff}
+```
+"""
+        return f"""You are analyzing a pull request for post-sync report generation and catalog routing.
+
+Do not perform a normal PR review. Focus on triage, risk bucketing, and which downstream catalogs should include this PR.
+
+Return ONLY valid JSON:
+{{
+  "agent_name": "catalog-router",
+  "focus_area": "catalog routing and prioritization",
+  "verdict": "low|medium|high",
+  "score": 0.0-1.0,
+  "summary": "2 short sentences about why this PR belongs in certain reports/catalogs",
+  "recommendations": ["short routing action, e.g. 'include in security-risk and needs-review'"],
+  "tags": ["optional-short-tag"],
+  "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
+  "confidence": 0.0-1.0
+}}
+
+Routing guidance:
+- `needs-review`: prioritize for human review
+- `aging-prs`: stale open PR
+- `security-risk`: security-sensitive scope
+- `release-risk`: risky breadth or regression potential
+- `recently-updated`: meaningful fresh activity today
+- `interesting-issues`: generally not applicable for PRs
+
+Pull request metadata:
+- number: {pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+PR description:
+{pr.body[:4000]}
+{diff_section}"""
+
     def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_prompt(agent_name, focus_area, pr)
+        try:
+            return self._run_prompt(prompt, agent_name, focus_area, pr)
+        except Exception as exc:
+            fallback = super().analyze_pr(agent_name, focus_area, pr)
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
+            return fallback
+
+    def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
+        prompt = self._build_catalog_prompt(pr)
+        try:
+            return self._run_prompt(prompt, "catalog-router", "catalog routing and prioritization", pr)
+        except Exception as exc:
+            fallback = super().analyze_catalog_routing(pr)
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
+            return fallback
+
+    def analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]) -> dict[int, PRSubagentFinding]:
+        if not prs:
+            return {}
+        prompt = self._build_catalog_batch_prompt(prs)
+        try:
+            payload = self._run_raw_prompt(prompt)
+            findings = payload.get("findings") if isinstance(payload, dict) else None
+            if not isinstance(findings, dict):
+                raise ValueError("Missing findings object in batch result")
+            results: dict[int, PRSubagentFinding] = {}
+            for pr in prs:
+                raw_finding = findings.get(str(pr.number))
+                if not isinstance(raw_finding, dict):
+                    continue
+                raw_finding["agent_name"] = "catalog-router"
+                raw_finding["focus_area"] = "catalog routing and prioritization"
+                finding = PRSubagentFinding.model_validate(raw_finding)
+                finding.score = _clamp(finding.score, 0.0, 1.0)
+                finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+                results[pr.number] = finding
+            return results
+        except Exception:
+            return super().analyze_catalog_routing_batch(prs)
+
+    def _build_catalog_batch_prompt(self, prs: list[PullRequestSnapshot]) -> str:
+        sections: list[str] = []
+        for pr in prs:
+            diff_section = ""
+            if pr.diff_text:
+                truncated_diff = pr.diff_text[:20_000]
+                if len(pr.diff_text) > 20_000:
+                    truncated_diff += "\n... (diff truncated)"
+                diff_section = f"\nDiff:\n```\n{truncated_diff}\n```"
+            sections.append(
+                f"""PR #{pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+Description:
+{pr.body[:2000]}{diff_section}"""
+            )
+        return """You are analyzing multiple pull requests for post-sync report generation and catalog routing.
+
+This is a batch routing task, not a normal PR review. For each PR, decide which reports/catalogs should include it and give a short routing summary.
+
+Return ONLY valid JSON in this shape:
+{
+  "findings": {
+    "<pr_number>": {
+      "verdict": "low|medium|high",
+      "score": 0.0-1.0,
+      "summary": "2 short routing sentences",
+      "recommendations": ["short routing action"],
+      "tags": ["optional-short-tag"],
+      "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
+      "confidence": 0.0-1.0
+    }
+  }
+}
+
+Routing guidance:
+- `needs-review`: prioritize for human review
+- `aging-prs`: stale open PR
+- `security-risk`: security-sensitive scope
+- `release-risk`: risky breadth or regression potential
+- `recently-updated`: meaningful fresh activity today
+- `interesting-issues`: generally not applicable for PRs
+
+Pull requests:
+""" + "\n\n".join(sections)
+
+    def _run_prompt(self, prompt: str, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
+        try:
+            data = self._run_raw_prompt(prompt)
+            if not isinstance(data, dict):
+                raise ValueError("Expected JSON object from model")
+            data["agent_name"] = agent_name
+            data["focus_area"] = focus_area
+            finding = PRSubagentFinding.model_validate(data)
+            finding.score = _clamp(finding.score, 0.0, 1.0)
+            finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+            return finding
+        except Exception:
+            raise
+
+    def _run_raw_prompt(self, prompt: str) -> object:
         last_message_path: str | None = None
         try:
             with tempfile.NamedTemporaryFile(prefix="codex_last_", suffix=".txt", delete=False) as tmp:
@@ -351,6 +737,7 @@ PR description:
             ]
             if self.model:
                 cmd.extend(["-m", self.model])
+            _log_cli_invocation(self.provider, cmd, prompt)
             cmd.append(prompt)
             proc = subprocess.run(
                 cmd,
@@ -366,22 +753,7 @@ PR description:
                     raw_output = Path(last_message_path).read_text(encoding="utf-8").strip()
                 except Exception:
                     raw_output = ""
-            data = ClaudeCodeLocalAdapter._extract_json_from_result(raw_output or proc.stdout)
-            data["agent_name"] = agent_name
-            data["focus_area"] = focus_area
-            finding = PRSubagentFinding.model_validate(data)
-            finding.score = _clamp(finding.score, 0.0, 1.0)
-            finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
-            return finding
-        except Exception as exc:
-            fallback = super().analyze_pr(agent_name, focus_area, pr)
-            detail = str(exc)
-            if isinstance(exc, subprocess.CalledProcessError):
-                stderr = (exc.stderr or "").strip().replace("\n", " ")
-                stdout = (exc.stdout or "").strip().replace("\n", " ")
-                detail = stderr or stdout or detail
-            fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
-            return fallback
+            return ClaudeCodeLocalAdapter._extract_json_payload(raw_output or proc.stdout)
         finally:
             if last_message_path:
                 try:

@@ -40,9 +40,9 @@ Commands:
   serve             Start the API server
   run-daily         Generate one daily report via CLI
   sync              Sync recent open PRs/issues
-  sync-all          Sync all open PRs/issues and recompute signals
+  sync-all          Sync all open PRs/issues only
   recompute         Recompute review/issue signals from synced data
-  report            Generate and print daily report
+  report            Generate derived analysis reports and print the legacy daily report view
   review <PR>       Run async review for a PR
   review-sync <PR>  Run sync review for a PR (wait for result)
   bootstrap         Install dependencies (uv if available, else .venv)

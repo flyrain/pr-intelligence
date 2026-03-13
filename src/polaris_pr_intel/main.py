@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 
 import uvicorn
 
@@ -18,6 +19,8 @@ from polaris_pr_intel.store.base import Repository
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.store.sqlite_repository import SQLiteRepository
 
+logger = logging.getLogger(__name__)
+
 
 
 def _build_repository(store_backend: str, sqlite_path: str) -> Repository:
@@ -26,15 +29,28 @@ def _build_repository(store_backend: str, sqlite_path: str) -> Repository:
     return InMemoryRepository()
 
 
+def _llm_display(provider: str, model: str) -> str:
+    model = model.strip()
+    return f"{provider} / {model}" if model else provider
+
+
+def _configure_logging() -> None:
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        return
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
 def build_runtime():
     settings = load_settings()
     repo = _build_repository(settings.store_backend, settings.sqlite_path)
     llm = build_llm_adapter(settings)
+    logger.info("Configured LLM provider: %s", _llm_display(llm.provider, llm.model))
     reviewer = PRSubagentReviewer(llm)
     gh = GitHubClient(settings.github_token, settings.github_owner, settings.github_repo)
     snapshot_ingestor = SnapshotIngestor(gh, repo)
     event_graph = EventGraph(repo, settings=settings)
-    daily_graph = DailyReportGraph(repo)
+    daily_graph = DailyReportGraph(repo, llm=llm, settings=settings)
     pr_review_graph = PRReviewGraph(repo, reviewer=reviewer, gh=gh)
     scheduler = DailyScheduler(daily_graph)
     app = create_app(
@@ -56,6 +72,7 @@ def build_runtime():
 
 
 def main() -> None:
+    _configure_logging()
     parser = argparse.ArgumentParser(description="Polaris PR intelligence service")
     sub = parser.add_subparsers(dest="command", required=True)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TypedDict
 
 from polaris_pr_intel.models import (
+    AnalysisRun,
     DailyReport,
     GitHubEvent,
     IssueSignal,
@@ -26,5 +27,6 @@ class PRIntelState(TypedDict, total=False):
     review_signal: ReviewSignal
     issue_signal: IssueSignal
     daily_report: DailyReport
+    analysis_run: AnalysisRun
     notifications: list[str]
     errors: list[str]

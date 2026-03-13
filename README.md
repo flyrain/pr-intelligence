@@ -28,15 +28,16 @@ Open:
 ./run.sh sync-all
 ```
 
-- Generate/update **Latest Report** tab content:
+- Generate/update derived analysis artifacts and **Latest Report** tab content:
 ```bash
 ./run.sh report
 ```
-By default this runs refresh first (`refresh=true`) with full sync-all semantics:
+By default this runs refresh first (`refresh=true`) and then:
 - sync open PRs/issues
 - prune stale locally-open PRs no longer open on GitHub
 - recompute review/issue signals
-- then generate the report markdown
+- run post-sync derived analysis
+- generate multiple report artifacts plus a legacy markdown view
 
 - Full refresh (recommended):
 ```bash
@@ -63,11 +64,13 @@ By default this runs refresh first (`refresh=true`) with full sync-all semantics
 ```bash
 # sync all open PRs/issues
 curl -X POST "http://127.0.0.1:8080/sync/all-open?per_page=100&max_pages=20"
-# (default) also marks stale locally-open PRs as closed when no longer in GitHub open list
-# (default) also recomputes needs-review / interesting-issues queues
+# (default) marks stale locally-open PRs as closed when no longer in GitHub open list
 
 # recompute needs-review / interesting-issues queues
 curl -X POST "http://127.0.0.1:8080/scores/recompute"
+
+# run post-sync analysis and generate report artifacts
+curl -X POST "http://127.0.0.1:8080/analysis/run"
 
 # async deep review
 curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run"
@@ -90,9 +93,9 @@ curl "http://127.0.0.1:8080/reports/daily/latest.md"
 
 ```bash
 ./run.sh serve                # start API server
-./run.sh sync-all             # sync all open PRs/issues + recompute review/issue signals
+./run.sh sync-all             # sync all open PRs/issues only
 ./run.sh sync                 # sync recent PRs/issues
-./run.sh report               # generate + print daily report
+./run.sh report               # run derived analysis + print legacy daily report view
 ./run.sh review 123           # async deep review for PR 123
 ./run.sh review-sync 123      # sync deep review for PR 123
 ./run.sh run-daily            # run daily graph via CLI
@@ -149,9 +152,12 @@ PORT=9090 ./run.sh serve
 
 - `GET /`, `GET /ui`, `GET /docs`, `GET /healthz`
 - `POST /sync/recent`, `POST /sync/all-open`
+- `POST /analysis/run`, `GET /analysis/latest`, `GET /analysis/runs`
+- `GET /catalogs`, `GET /catalogs/{catalog_name}`
 - `POST /scores/recompute`
-- `POST /reports/daily/run` (default refresh path uses sync-all semantics + recompute)
+- `POST /reports/daily/run` (refresh + recompute + derived analysis + legacy report)
 - `GET /reports/daily/latest`, `GET /reports/daily/latest.md`, `GET /reports/daily`
+- `GET /reports/artifacts/latest`
 - `POST /reviews/pr/{pr_number}/run` (async by default)
 - `POST /reviews/pr/{pr_number}/run-sync`
 - `GET /reviews/pr/{pr_number}/job`, `GET /reviews/jobs/{job_id}`

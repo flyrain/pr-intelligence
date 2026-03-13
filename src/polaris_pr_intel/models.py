@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -78,6 +79,41 @@ class DailyReport(BaseModel):
     markdown: str
 
 
+class ReportArtifact(BaseModel):
+    name: str
+    title: str
+    markdown: str
+
+
+class AnalysisItem(BaseModel):
+    item_type: Literal["pr", "issue"]
+    number: int
+    title: str
+    url: str
+    score: float
+    heuristic_reasons: list[str] = Field(default_factory=list)
+    catalogs: list[str] = Field(default_factory=list)
+    llm_summary: str = ""
+    llm_tags: list[str] = Field(default_factory=list)
+    llm_provider: str = ""
+    llm_model: str = ""
+    confidence: float = 0.0
+    updated_at: datetime
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    analysis_version: str = "v1"
+
+
+class AnalysisRun(BaseModel):
+    run_id: str = Field(default_factory=lambda: str(uuid4()))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    source_sync_at: datetime | None = None
+    analysis_version: str = "v1"
+    top_slice_limit: int = 0
+    catalog_counts: dict[str, int] = Field(default_factory=dict)
+    artifacts: list[ReportArtifact] = Field(default_factory=list)
+    items: list[AnalysisItem] = Field(default_factory=list)
+
+
 class QueueItem(BaseModel):
     number: int
     title: str
@@ -93,6 +129,8 @@ class PRSubagentFinding(BaseModel):
     score: float
     summary: str
     recommendations: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    suggested_catalogs: list[str] = Field(default_factory=list)
     confidence: float = 0.6
 
 

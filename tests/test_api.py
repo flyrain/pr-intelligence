@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from polaris_pr_intel.api.app import create_app
 from polaris_pr_intel.config import Settings
-from polaris_pr_intel.models import DailyReport, GitHubEvent, IssueSignal, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReviewSignal
+from polaris_pr_intel.models import AnalysisItem, AnalysisRun, DailyReport, GitHubEvent, IssueSignal, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
 
 
@@ -17,8 +17,19 @@ class _DummyEventGraph:
 
 
 class _DummyDailyGraph:
+    def __init__(self, repo: InMemoryRepository) -> None:
+        self.repo = repo
+
     def invoke(self) -> dict:
-        return {"notifications": ["daily-report"]}
+        needs_review = sum(1 for signal in self.repo.review_signals.values() if signal.needs_review)
+        run = AnalysisRun(
+            artifacts=[ReportArtifact(name="executive-summary", title="Executive Summary", markdown="# Executive Summary\n\n- ok")],
+            catalog_counts={"needs-review": needs_review},
+        )
+        report = DailyReport(date="2026-03-10", markdown="# Executive Summary\n\n- ok")
+        self.repo.save_analysis_run(run)
+        self.repo.save_daily_report(report)
+        return {"notifications": ["daily-report"], "analysis_run": run, "daily_report": report}
 
 
 class _DummyIngestor:
@@ -84,7 +95,7 @@ def _client(settings: Settings | None = None) -> tuple[TestClient, InMemoryRepos
     app = create_app(
         repo,
         _DummyEventGraph(),
-        _DummyDailyGraph(),
+        _DummyDailyGraph(repo),
         pr_review_graph=pr_review_graph,
         snapshot_ingestor=ingestor,
         settings=settings or Settings(github_token=""),
@@ -278,6 +289,8 @@ def test_run_daily_report_refreshes_by_default() -> None:
     assert data["ok"] is True
     assert data["synced"]["prs"] == 2000
     assert data["scored"] == {"prs": 0, "issues": 0, "needs_review": 0, "interesting_issues": 0}
+    assert data["analysis_run"]["artifacts"][0]["name"] == "executive-summary"
+    assert data["report"]["date"] == "2026-03-10"
     assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None, "prune_missing_open_prs": True}
 
 
@@ -287,8 +300,67 @@ def test_sync_all_open_endpoint() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["synced"]["prs"] == 150
-    assert body["scored"] == {"prs": 0, "issues": 0, "needs_review": 0, "interesting_issues": 0}
     assert ingestor.calls[0] == {"per_page": 50, "max_pages": 3, "since": None, "prune_missing_open_prs": True}
+
+
+def test_analysis_run_endpoint_returns_catalogs_and_report() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=12,
+            title="Security hardening",
+            body="permissions update",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=["security"],
+            requested_reviewers=["bob"],
+            comments=0,
+            review_comments=0,
+            commits=2,
+            changed_files=4,
+            additions=80,
+            deletions=10,
+            html_url="https://example.com/pr/12",
+            updated_at=now,
+        )
+    )
+    repo.save_review_signal(ReviewSignal(pr_number=12, score=3.0, reasons=["reviewers-requested"], needs_review=True))
+
+    resp = client.post("/analysis/run")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["ok"] is True
+    assert payload["analysis_run"]["catalog_counts"]["needs-review"] >= 1
+    assert payload["report"]["markdown"].startswith("# Executive Summary")
+
+
+def test_catalog_endpoint_reads_latest_analysis_run() -> None:
+    client, repo, _, _ = _client()
+    run = AnalysisRun(
+        artifacts=[],
+        items=[
+            AnalysisItem(
+                item_type="pr",
+                number=7,
+                title="Needs review",
+                url="https://example.com/pr/7",
+                score=3.0,
+                heuristic_reasons=["reviewers-requested"],
+                catalogs=["needs-review"],
+                updated_at=datetime.now(timezone.utc),
+            )
+        ],
+        catalog_counts={"needs-review": 1},
+    )
+    repo.save_analysis_run(run)
+
+    resp = client.get("/catalogs/needs-review")
+
+    assert resp.status_code == 200
+    assert resp.json()["items"][0]["number"] == 7
 
 
 def test_scores_recompute_endpoint_populates_queues() -> None:
@@ -345,7 +417,7 @@ def test_scores_recompute_endpoint_populates_queues() -> None:
 
 
 def test_ui_endpoint_renders_dashboard() -> None:
-    client, repo, _, _ = _client()
+    client, repo, _, _ = _client(Settings(github_token="", llm_provider="codex_local", llm_model="gpt-5-codex"))
     repo.save_daily_report(
         DailyReport(
             date="2026-03-10",
@@ -378,12 +450,14 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "Polaris PR Intelligence" in resp.text
+    assert "LLM Provider: codex_local / gpt-5-codex" in resp.text
     assert "Latest Report" in resp.text
     assert "PRs Needing Review" in resp.text
     assert "Deep PR Reviews" in resp.text
     assert "No deep reviews yet." in resp.text
     assert "Review Jobs" in resp.text
     assert "Sync All Open PRs/Issues" in resp.text
+    assert 'fetch("/analysis/run", { method: "POST" })' in resp.text
     assert '<details class="tab-fold">' in resp.text
     assert '<details class="tab-fold" open>' not in resp.text
     assert '<details class="queue-section">' in resp.text
