@@ -39,7 +39,6 @@ Usage: ./run.sh <command> [args]
 Commands:
   serve             Start the API server
   refresh           Full refresh: sync + score + analyze + report
-  sync              Sync recent open PRs/issues (incremental)
   report            View the latest markdown report (read-only)
   review <PR>       Run async review for a PR
   review-sync <PR>  Run sync review for a PR (wait for result)
@@ -56,9 +55,6 @@ EOF
 case "${1:-}" in
     serve)
         run_cli serve --host "$HOST" --port "$PORT"
-        ;;
-    sync)
-        curl -s -X POST "$BASE/sync/recent" | (command -v jq >/dev/null 2>&1 && jq || python3 -m json.tool 2>/dev/null || cat)
         ;;
     refresh)
         curl -s -X POST "$BASE/refresh" | (command -v jq >/dev/null 2>&1 && jq || python3 -m json.tool 2>/dev/null || cat)

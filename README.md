@@ -84,12 +84,6 @@ To generate a fresh report first:
 ./run.sh report   # View the report
 ```
 
-- **Incremental sync only:**
-```bash
-./run.sh sync
-```
-Syncs recent PRs/issues without recomputing scores or running analysis.
-
 ### 2) Typical workflow
 ```bash
 # 1. Full refresh (sync + score + analyze + report)
@@ -123,9 +117,6 @@ curl -X POST "http://127.0.0.1:8080/refresh"
 # View latest report (read-only)
 curl "http://127.0.0.1:8080/reports/daily/latest.md"
 
-# Incremental sync only
-curl -X POST "http://127.0.0.1:8080/sync/recent"
-
 # Async deep review
 curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run"
 
@@ -141,7 +132,6 @@ curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run?wait=true"
 ```bash
 ./run.sh serve                # start API server
 ./run.sh refresh              # full refresh: sync + score + analyze + report
-./run.sh sync                 # sync recent PRs/issues (incremental)
 ./run.sh report               # view latest markdown report (read-only)
 ./run.sh review 123           # async deep review for PR 123
 ./run.sh review-sync 123      # sync deep review for PR 123
@@ -201,7 +191,6 @@ PORT=9090 ./run.sh serve
 
 ### Core Workflow
 - `POST /refresh` - Full refresh: sync + score + analyze + report (recommended)
-- `POST /sync/recent` - Incremental sync of recent PRs/issues
 
 ### Reports
 - `GET /reports/daily/latest.md` - Latest generated report (markdown)
