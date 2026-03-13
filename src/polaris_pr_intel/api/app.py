@@ -347,7 +347,7 @@ def create_app(
                 "<details class=\"review-detail\">"
                 "<summary>"
                 f"<span><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a> · {escape(pr.title)}</span>"
-                f"<span>priority={report.overall_priority:.2f} · {escape(report.provider)}</span>"
+                f"<span>priority={report.overall_priority:.2f} · <a href=\"/reviews/pr/{pr.number}/latest.md\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"view-report-link\">View Report</a></span>"
                 "</summary>"
                 f"<p class=\"muted\">Provider: {escape(report.provider)} | Model: {escape(report.model)} | Recommendation: {escape(report.overall_recommendation)}</p>"
                 f"{''.join(findings_html) if findings_html else '<p>No findings.</p>'}"
@@ -492,6 +492,19 @@ def create_app(
       flex-wrap: wrap;
       font-weight: 600;
       color: var(--accent2);
+    }}
+    .view-report-link {{
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 2px 8px;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      transition: background 0.2s;
+    }}
+    .view-report-link:hover {{
+      background: var(--accent);
+      color: white;
     }}
     .finding {{
       margin-top: 10px;
@@ -869,6 +882,57 @@ def create_app(
     def latest_pr_review(pr_number: int) -> dict:
         report = repo.latest_pr_review_report(pr_number)
         return {"ok": True, "report": report.model_dump() if report else None}
+
+    @app.get("/reviews/pr/{pr_number}/latest.md", response_class=PlainTextResponse)
+    def latest_pr_review_markdown(pr_number: int) -> str:
+        report = repo.latest_pr_review_report(pr_number)
+        if not report:
+            return f"# PR #{pr_number} Review\n\nNo review has been generated yet.\n"
+
+        pr = repo.prs.get(pr_number)
+        pr_title = pr.title if pr else f"PR #{pr_number}"
+
+        # Build markdown
+        lines = [
+            f"# PR #{pr_number}: {pr_title}",
+            "",
+            f"**Overall Priority:** {report.overall_priority:.2f}",
+            f"**Recommendation:** {report.overall_recommendation}",
+            f"**Provider:** {report.provider} ({report.model})",
+            f"**Generated:** {report.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            "",
+            "---",
+            "",
+        ]
+
+        if not report.findings:
+            lines.append("No findings.")
+        else:
+            for i, finding in enumerate(report.findings, 1):
+                lines.extend([
+                    f"## {i}. {finding.agent_name}: {finding.focus_area}",
+                    "",
+                    f"**Verdict:** {finding.verdict.upper()} | **Score:** {finding.score:.2f} | **Confidence:** {finding.confidence:.2f}",
+                    "",
+                    f"### Summary",
+                    finding.summary,
+                    "",
+                ])
+
+                if finding.recommendations:
+                    lines.append("### Recommendations")
+                    for rec in finding.recommendations:
+                        lines.append(f"- {rec}")
+                    lines.append("")
+
+                if finding.tags:
+                    lines.append(f"**Tags:** {', '.join(finding.tags)}")
+                    lines.append("")
+
+                lines.append("---")
+                lines.append("")
+
+        return "\n".join(lines)
 
     @app.get("/reviews/pr/top")
     def top_pr_reviews(limit: int = 20) -> dict:

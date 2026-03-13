@@ -200,7 +200,8 @@ PORT=9090 ./run.sh serve
 - `POST /reviews/pr/{pr_number}/run-sync` - Sync review (waits for result)
 - `GET /reviews/pr/{pr_number}/job` - Get job status by PR number
 - `GET /reviews/jobs/{job_id}` - Get job status by job ID
-- `GET /reviews/pr/{pr_number}/latest` - Latest review result for PR
+- `GET /reviews/pr/{pr_number}/latest` - Latest review result (JSON)
+- `GET /reviews/pr/{pr_number}/latest.md` - Latest review result (markdown)
 - `GET /reviews/pr/top` - Top-rated reviews
 
 ### Queues
