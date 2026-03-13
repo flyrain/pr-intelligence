@@ -63,21 +63,21 @@ case "${1:-}" in
         run_cli run-daily
         ;;
     sync)
-        curl -s -X POST "$BASE/sync/recent" | python -m json.tool
+        curl -s -X POST "$BASE/sync/recent" | (command -v jq >/dev/null 2>&1 && jq || python3 -m json.tool 2>/dev/null || cat)
         ;;
     refresh)
-        curl -s -X POST "$BASE/refresh" | python -m json.tool
+        curl -s -X POST "$BASE/refresh" | (command -v jq >/dev/null 2>&1 && jq || python3 -m json.tool 2>/dev/null || cat)
         ;;
     report)
         curl -s "$BASE/reports/daily/latest.md"
         ;;
     review)
         [[ -z "${2:-}" ]] && echo "Usage: ./run.sh review <PR_NUMBER>" && exit 1
-        curl -s -X POST "$BASE/reviews/pr/$2/run" | python -m json.tool
+        curl -s -X POST "$BASE/reviews/pr/$2/run" | (command -v jq >/dev/null 2>&1 && jq || python3 -m json.tool 2>/dev/null || cat)
         ;;
     review-sync)
         [[ -z "${2:-}" ]] && echo "Usage: ./run.sh review-sync <PR_NUMBER>" && exit 1
-        curl -s -X POST "$BASE/reviews/pr/$2/run?wait=true" | python -m json.tool
+        curl -s -X POST "$BASE/reviews/pr/$2/run?wait=true" | (command -v jq >/dev/null 2>&1 && jq || python3 -m json.tool 2>/dev/null || cat)
         ;;
     bootstrap)
         if use_uv_runtime; then
