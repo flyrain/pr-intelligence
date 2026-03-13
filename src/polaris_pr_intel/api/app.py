@@ -125,50 +125,6 @@ def create_app(
             return True
         return any((r or "").strip().lower() == review_target_login for r in pr.requested_reviewers)
 
-    def _recompute_scores(open_only: bool = True) -> dict[str, int]:
-        prs_scored = 0
-        issues_scored = 0
-        needs_review = 0
-        interesting_issues = 0
-
-        for pr in repo.prs.values():
-            if open_only and pr.state != "open":
-                continue
-            signal = review_need_agent.run(pr)
-            repo.save_review_signal(signal)
-            prs_scored += 1
-            if signal.needs_review:
-                needs_review += 1
-
-        for issue in repo.issues.values():
-            if open_only and issue.state != "open":
-                continue
-            signal = issue_insight_agent.run(issue)
-            repo.save_issue_signal(signal)
-            issues_scored += 1
-            if signal.interesting:
-                interesting_issues += 1
-
-        return {
-            "prs": prs_scored,
-            "issues": issues_scored,
-            "needs_review": needs_review,
-            "interesting_issues": interesting_issues,
-        }
-
-    def _sync_all_open(
-        per_page: int = 100,
-        max_pages: int = 20,
-        prune_missing_open_prs: bool = True,
-    ) -> dict:
-        synced = snapshot_ingestor.sync_recent(
-            per_page=per_page,
-            max_pages=max_pages,
-            since=None,
-            prune_missing_open_prs=prune_missing_open_prs,
-        )
-        return {"synced": synced}
-
     def _latest_analysis_items() -> list[AnalysisItem]:
         latest_run = repo.latest_analysis_run()
         if not latest_run:
@@ -253,12 +209,11 @@ def create_app(
             "status": "ok",
             "stats": _stats(),
             "next_steps": [
-                "POST /sync/all-open to pull open PRs/issues from GitHub",
-                "POST /scores/recompute to refresh review/issue signals from synced data",
-                "POST /reports/daily/run to refresh and generate a report",
+                "POST /refresh to sync, score, analyze, and generate reports",
                 "POST /reviews/pr/{number}/run to run subagent deep review",
                 "GET /queues/needs-review to see prioritized PRs",
                 "GET /queues/interesting-issues to see prioritized issues",
+                "GET /reports/daily/latest.md to view the latest markdown report",
             ],
             "links": {
                 "docs": "/docs",
@@ -283,7 +238,7 @@ def create_app(
         latest_report_html = (
             _report_markdown_to_html(latest.markdown)
             if latest
-            else "<h2>No Report Yet</h2><p>Run <code>POST /reports/daily/run</code> to generate one.</p>"
+            else "<h2>No Report Yet</h2><p>Run <code>POST /refresh</code> to generate one.</p>"
         )
         new_updated_rows = []
         def _is_updated_today_local(updated_at: datetime) -> bool:
@@ -617,26 +572,19 @@ def create_app(
     }}
   </style>
   <script>
-    async function syncAllOpen(btn) {{
+    async function refreshAll(btn) {{
       const original = btn.textContent;
       btn.disabled = true;
-      btn.textContent = "Syncing...";
+      btn.textContent = "Refreshing...";
       try {{
-        const syncRes = await fetch("/sync/all-open?per_page=100&max_pages=20", {{ method: "POST" }});
-        const syncData = await syncRes.json();
-        if (!syncData.ok) {{
-          btn.textContent = "Failed";
-          console.error("sync all-open failed", syncData);
-          return;
-        }}
-        const analysisRes = await fetch("/analysis/run", {{ method: "POST" }});
-        const analysisData = await analysisRes.json();
-        if (analysisData.ok) {{
-          btn.textContent = "Synced";
+        const res = await fetch("/refresh?per_page=100&max_pages=20", {{ method: "POST" }});
+        const data = await res.json();
+        if (data.ok) {{
+          btn.textContent = "Refreshed";
           setTimeout(() => window.location.reload(), 600);
         }} else {{
           btn.textContent = "Failed";
-          console.error("analysis run failed", analysisData);
+          console.error("refresh failed", data);
         }}
       }} catch (e) {{
         btn.textContent = "Failed";
@@ -682,7 +630,7 @@ def create_app(
 	      <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
 	      <div class="actions">
 	        <a class="btn primary" href="/docs">Open API Docs</a>
-	        <button class="btn sync-btn" type="button" onclick="syncAllOpen(this)">Sync All Open PRs/Issues</button>
+	        <button class="btn sync-btn" type="button" onclick="refreshAll(this)">Refresh All Data</button>
         <a class="btn" href="/reports/daily/latest.md">Latest Report Markdown</a>
         <a class="btn" href="/queues/needs-review">Needs Review JSON</a>
         <a class="btn" href="/queues/interesting-issues">Interesting Issues JSON</a>
@@ -786,63 +734,72 @@ def create_app(
             repo.mark_processed_event(x_github_delivery)
         return {"ok": True, "notifications": out.get("notifications", [])}
 
-    @app.post("/reports/daily/run")
-    def run_daily_report(
-        refresh: bool = True,
+    @app.post("/refresh")
+    def refresh_all(
         per_page: int = 100,
         max_pages: int = 20,
         prune_missing_open_prs: bool = True,
-        recompute: bool = True,
     ) -> dict:
-        sync_out: dict | None = None
-        if refresh:
-            sync_out = _sync_all_open(
-                per_page=per_page,
-                max_pages=max_pages,
-                prune_missing_open_prs=prune_missing_open_prs,
-            )
-        scored = _recompute_scores(open_only=True) if recompute else None
+        """
+        Complete refresh: sync GitHub data → recompute scores → run analysis → generate report.
+
+        This is the recommended endpoint for updating all intelligence data.
+        """
+        # Step 1: Sync GitHub data
+        synced = snapshot_ingestor.sync_recent(
+            per_page=per_page,
+            max_pages=max_pages,
+            since=None,
+            prune_missing_open_prs=prune_missing_open_prs,
+        )
+
+        # Step 2: Recompute scores
+        prs_scored = 0
+        issues_scored = 0
+        needs_review = 0
+        interesting_issues = 0
+
+        for pr in repo.prs.values():
+            if pr.state != "open":
+                continue
+            signal = review_need_agent.run(pr)
+            repo.save_review_signal(signal)
+            prs_scored += 1
+            if signal.needs_review:
+                needs_review += 1
+
+        for issue in repo.issues.values():
+            if issue.state != "open":
+                continue
+            signal = issue_insight_agent.run(issue)
+            repo.save_issue_signal(signal)
+            issues_scored += 1
+            if signal.interesting:
+                interesting_issues += 1
+
+        # Step 3: Run analysis & generate report
         out = daily_graph.invoke()
         analysis_run = out.get("analysis_run")
         report = out.get("daily_report")
-        resp = {
+
+        return {
             "ok": True,
-            "notifications": out.get("notifications", []),
-            "report": report.model_dump() if report else None,
+            "synced": synced,
+            "scored": {
+                "prs": prs_scored,
+                "issues": issues_scored,
+                "needs_review": needs_review,
+                "interesting_issues": interesting_issues,
+            },
             "analysis_run": analysis_run.model_dump() if analysis_run else None,
+            "report": report.model_dump() if report else None,
+            "notifications": out.get("notifications", []),
         }
-        if sync_out is not None:
-            resp.update(sync_out)
-        if scored is not None:
-            resp["scored"] = scored
-        return resp
 
     @app.post("/sync/recent")
     def sync_recent(per_page: int = 30, max_pages: int = 1, since: str | None = None) -> dict:
         synced = snapshot_ingestor.sync_recent(per_page=per_page, max_pages=max_pages, since=since)
         return {"ok": True, "synced": synced}
-
-    @app.post("/sync/all-open")
-    def sync_all_open(
-        per_page: int = 100,
-        max_pages: int = 20,
-        prune_missing_open_prs: bool = True,
-    ) -> dict:
-        return {"ok": True, **_sync_all_open(per_page, max_pages, prune_missing_open_prs)}
-
-    @app.post("/analysis/run")
-    def run_analysis() -> dict:
-        scored = _recompute_scores(open_only=True)
-        out = daily_graph.invoke()
-        analysis_run = out.get("analysis_run")
-        report = out.get("daily_report")
-        return {
-            "ok": True,
-            "notifications": out.get("notifications", []),
-            "scored": scored,
-            "analysis_run": analysis_run.model_dump() if analysis_run else None,
-            "report": report.model_dump() if report else None,
-        }
 
     @app.get("/analysis/latest")
     def latest_analysis() -> dict:
@@ -865,13 +822,6 @@ def create_app(
     def catalog_items(catalog_name: str) -> dict:
         items = [item.model_dump() for item in _latest_analysis_items() if catalog_name in item.catalogs]
         return {"ok": True, "catalog": catalog_name, "items": items}
-
-    @app.post("/scores/recompute")
-    def recompute_scores(open_only: bool = True) -> dict:
-        return {
-            "ok": True,
-            "scored": _recompute_scores(open_only=open_only),
-        }
 
     @app.post("/reviews/pr/{pr_number}/run")
     def run_pr_review(pr_number: int, wait: bool = False) -> dict:

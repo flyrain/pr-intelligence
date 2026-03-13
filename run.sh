@@ -39,10 +39,9 @@ Usage: ./run.sh <command> [args]
 Commands:
   serve             Start the API server
   run-daily         Generate one daily report via CLI
-  sync              Sync recent open PRs/issues
-  sync-all          Sync all open PRs/issues only
-  recompute         Recompute review/issue signals from synced data
-  report            Generate derived analysis reports and print the legacy daily report view
+  refresh           Full refresh: sync + score + analyze + report
+  sync              Sync recent open PRs/issues (incremental)
+  report            View the latest markdown report (read-only)
   review <PR>       Run async review for a PR
   review-sync <PR>  Run sync review for a PR (wait for result)
   bootstrap         Install dependencies (uv if available, else .venv)
@@ -66,14 +65,10 @@ case "${1:-}" in
     sync)
         curl -s -X POST "$BASE/sync/recent" | python -m json.tool
         ;;
-    sync-all)
-        curl -s -X POST "$BASE/sync/all-open?per_page=100&max_pages=20" | python -m json.tool
-        ;;
-    recompute)
-        curl -s -X POST "$BASE/scores/recompute" | python -m json.tool
+    refresh)
+        curl -s -X POST "$BASE/refresh" | python -m json.tool
         ;;
     report)
-        curl -s -X POST "$BASE/reports/daily/run" > /dev/null
         curl -s "$BASE/reports/daily/latest.md"
         ;;
     review)

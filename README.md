@@ -61,44 +61,48 @@ Open:
 
 ### Which command updates what?
 
-- **Update raw synced GitHub data only:**
+- **Full refresh (recommended):**
 ```bash
-./run.sh sync-all
+./run.sh refresh
 ```
-
-- **Generate/update derived analysis artifacts and Latest Report tab content:**
-```bash
-./run.sh report
-```
-By default this runs refresh first (`refresh=true`) and then:
+This is the one-stop command that:
 - Syncs open PRs/issues from GitHub
 - Prunes stale locally-open PRs no longer open on GitHub
 - Recomputes review/issue priority scores using deterministic scoring rules
-- Runs post-sync derived analysis in a batched LLM call for the top PR slice (default: top 10)
-- Generates multiple report artifacts:
-  - **Analysis runs** with structured insights (available via `/analysis/latest` and `/analysis/runs`)
-  - **Catalog routing** for specialized PR categories (architecture, security, performance, etc.)
-  - **Legacy attention report** in markdown format (displayed in Latest Report tab)
+- Runs post-sync derived analysis in a batched LLM call for the top PR slice
+- Generates multiple report artifacts
 
-- **Full refresh (recommended):**
+- **View the latest report:**
 ```bash
-./run.sh sync-all
 ./run.sh report
 ```
+Prints the latest markdown report (read-only, fast).
+
+To generate a fresh report first:
+```bash
+./run.sh refresh  # Update everything
+./run.sh report   # View the report
+```
+
+- **Incremental sync only:**
+```bash
+./run.sh sync
+```
+Syncs recent PRs/issues without recomputing scores or running analysis.
 
 ### 2) Typical workflow
 ```bash
-# 1. Sync raw PR/issue data from GitHub
-./run.sh sync-all
+# 1. Full refresh (sync + score + analyze + report)
+./run.sh refresh
 
-# 2. Queue a deep review for a specific PR (async - returns immediately with job_id)
+# 2. View the latest report
+./run.sh report
+
+# 3. Queue a deep review for a specific PR (async)
 ./run.sh review 123
 
-# 3. Or run a blocking review that waits for completion (sync)
+# 4. Or run a blocking review that waits for completion (sync)
 ./run.sh review-sync 123
-
-# 4. Generate analysis reports (runs batch LLM analysis on top PRs)
-./run.sh report
 ```
 
 **Note:** The review commands require the API server to be running in another terminal:
@@ -107,46 +111,38 @@ By default this runs refresh first (`refresh=true`) and then:
 ./run.sh serve
 
 # Terminal 2: Run commands
-./run.sh sync-all
+./run.sh refresh
 ./run.sh review 123
 ```
 
 ### 3) Common curl equivalents
 ```bash
-# sync all open PRs/issues
-curl -X POST "http://127.0.0.1:8080/sync/all-open?per_page=100&max_pages=20"
-# (default) marks stale locally-open PRs as closed when no longer in GitHub open list
+# Full refresh (sync + score + analyze + report)
+curl -X POST "http://127.0.0.1:8080/refresh"
 
-# recompute needs-review / interesting-issues queues
-curl -X POST "http://127.0.0.1:8080/scores/recompute"
+# View latest report (read-only)
+curl "http://127.0.0.1:8080/reports/daily/latest.md"
 
-# run post-sync analysis and generate report artifacts
-curl -X POST "http://127.0.0.1:8080/analysis/run"
+# Incremental sync only
+curl -X POST "http://127.0.0.1:8080/sync/recent"
 
-# async deep review
+# Async deep review
 curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run"
 
-# check latest job by PR number
+# Check latest job by PR number
 curl "http://127.0.0.1:8080/reviews/pr/123/job"
 
-# sync deep review
+# Sync deep review
 curl -X POST "http://127.0.0.1:8080/reviews/pr/123/run?wait=true"
-
-# generate report
-curl -X POST "http://127.0.0.1:8080/reports/daily/run"
-# (default: refresh=true, recompute=true, prune_missing_open_prs=true)
-
-# latest markdown report
-curl "http://127.0.0.1:8080/reports/daily/latest.md"
 ```
 
 ## `run.sh` Commands
 
 ```bash
 ./run.sh serve                # start API server
-./run.sh sync-all             # sync all open PRs/issues only
-./run.sh sync                 # sync recent PRs/issues
-./run.sh report               # run derived analysis + print legacy attention report view
+./run.sh refresh              # full refresh: sync + score + analyze + report
+./run.sh sync                 # sync recent PRs/issues (incremental)
+./run.sh report               # view latest markdown report (read-only)
 ./run.sh review 123           # async deep review for PR 123
 ./run.sh review-sync 123      # sync deep review for PR 123
 ./run.sh run-daily            # run daily graph via CLI
@@ -205,20 +201,29 @@ PORT=9090 ./run.sh serve
 
 ## API Overview
 
-- `GET /`, `GET /ui`, `GET /docs`, `GET /healthz`
-- `POST /sync/recent`, `POST /sync/all-open`
-- `POST /analysis/run`, `GET /analysis/latest`, `GET /analysis/runs`
-- `GET /catalogs`, `GET /catalogs/{catalog_name}`
-- `POST /scores/recompute`
-- `POST /reports/daily/run` (refresh + recompute + derived analysis + legacy report)
+### Core Workflow
+- `POST /refresh` - Full refresh: sync + score + analyze + report (recommended)
+- `POST /sync/recent` - Incremental sync of recent PRs/issues
+
+### Reports & Analysis
 - `GET /reports/daily/latest`, `GET /reports/daily/latest.md`, `GET /reports/daily`
+- `GET /analysis/latest`, `GET /analysis/runs`
+- `GET /catalogs`, `GET /catalogs/{catalog_name}`
 - `GET /reports/artifacts/latest`
+
+### PR Reviews (Deep Analysis)
 - `POST /reviews/pr/{pr_number}/run` (async by default)
 - `POST /reviews/pr/{pr_number}/run-sync`
 - `GET /reviews/pr/{pr_number}/job`, `GET /reviews/jobs/{job_id}`
 - `GET /reviews/pr/{pr_number}/latest`, `GET /reviews/pr/top`
 - `POST /reviews/run-open`
+
+### Queues
 - `GET /queues/needs-review`, `GET /queues/interesting-issues`
+
+### Other
+- `GET /`, `GET /ui`, `GET /docs`, `GET /healthz`, `GET /stats`
+- `POST /webhooks/github`
 
 ## Skills System
 
@@ -231,7 +236,7 @@ The service uses **two separate skill files** for different analysis tasks:
 
 2. **`skills/polaris-report-analysis/skill.md`** (post-sync report analysis)
    - Used by `DailyReportGraph` for batch analysis across top PRs
-   - Invoked via `/reports/daily/run` and `/analysis/run`
+   - Invoked via `/refresh`
    - Processes multiple PRs in a single LLM call for efficiency
    - Generates derived analysis artifacts and attention-oriented reports
 

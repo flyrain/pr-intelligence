@@ -282,8 +282,9 @@ def test_latest_report_markdown_endpoint() -> None:
 
 
 def test_run_daily_report_refreshes_by_default() -> None:
+    """Test that refresh endpoint (replacing reports/daily/run) works correctly."""
     client, _, ingestor, _ = _client()
-    resp = client.post("/reports/daily/run")
+    resp = client.post("/refresh")
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True
@@ -294,16 +295,8 @@ def test_run_daily_report_refreshes_by_default() -> None:
     assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None, "prune_missing_open_prs": True}
 
 
-def test_sync_all_open_endpoint() -> None:
-    client, _, ingestor, _ = _client()
-    resp = client.post("/sync/all-open", params={"per_page": 50, "max_pages": 3})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["synced"]["prs"] == 150
-    assert ingestor.calls[0] == {"per_page": 50, "max_pages": 3, "since": None, "prune_missing_open_prs": True}
-
-
 def test_analysis_run_endpoint_returns_catalogs_and_report() -> None:
+    """Test that refresh endpoint (replacing analysis/run) works correctly."""
     client, repo, _, _ = _client()
     now = datetime.now(timezone.utc)
     repo.upsert_pr(
@@ -328,7 +321,7 @@ def test_analysis_run_endpoint_returns_catalogs_and_report() -> None:
     )
     repo.save_review_signal(ReviewSignal(pr_number=12, score=3.0, reasons=["reviewers-requested"], needs_review=True))
 
-    resp = client.post("/analysis/run")
+    resp = client.post("/refresh")
 
     assert resp.status_code == 200
     payload = resp.json()
@@ -364,6 +357,7 @@ def test_catalog_endpoint_reads_latest_analysis_run() -> None:
 
 
 def test_scores_recompute_endpoint_populates_queues() -> None:
+    """Test that refresh endpoint (replacing scores/recompute) populates queues."""
     client, repo, _, _ = _client()
     repo.upsert_pr(
         PullRequestSnapshot(
@@ -402,7 +396,7 @@ def test_scores_recompute_endpoint_populates_queues() -> None:
         )
     )
 
-    resp = client.post("/scores/recompute")
+    resp = client.post("/refresh")
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["ok"] is True
@@ -456,8 +450,8 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Deep PR Reviews" in resp.text
     assert "No deep reviews yet." in resp.text
     assert "Review Jobs" in resp.text
-    assert "Sync All Open PRs/Issues" in resp.text
-    assert 'fetch("/analysis/run", { method: "POST" })' in resp.text
+    assert "Refresh All Data" in resp.text
+    assert 'fetch("/refresh' in resp.text
     assert '<details class="tab-fold">' in resp.text
     assert '<details class="tab-fold" open>' not in resp.text
     assert '<details class="queue-section">' in resp.text
@@ -891,3 +885,57 @@ def test_pr_review_returns_not_found_when_fetch_fails() -> None:
     data = resp.json()
     assert data["ok"] is False
     assert data["errors"] == ["pr-not-found:999"]
+
+
+def test_refresh_endpoint() -> None:
+    """Test the unified /refresh endpoint."""
+    client, repo, ingestor, _ = _client()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=400,
+            title="Test PR",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=["bob"],
+            comments=0,
+            review_comments=0,
+            commits=2,
+            changed_files=4,
+            additions=80,
+            deletions=10,
+            html_url="https://example.com/pr/400",
+            updated_at=now,
+        )
+    )
+
+    resp = client.post("/refresh")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["ok"] is True
+    assert "synced" in data
+    assert "scored" in data
+    assert "analysis_run" in data
+    assert "report" in data
+
+    # Verify sync happened
+    assert data["synced"]["prs"] == 2000
+
+    # Verify scoring happened
+    assert data["scored"]["prs"] == 1
+
+    # Verify analysis happened
+    assert data["analysis_run"] is not None
+    assert data["analysis_run"]["catalog_counts"] is not None
+
+    # Verify report happened
+    assert data["report"] is not None
+    assert data["report"]["markdown"] is not None
+
+    # Verify ingestor was called correctly
+    assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None, "prune_missing_open_prs": True}
+
