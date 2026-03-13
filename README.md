@@ -205,25 +205,30 @@ PORT=9090 ./run.sh serve
 - `POST /refresh` - Full refresh: sync + score + analyze + report (recommended)
 - `POST /sync/recent` - Incremental sync of recent PRs/issues
 
-### Reports & Analysis
-- `GET /reports/daily/latest`, `GET /reports/daily/latest.md`, `GET /reports/daily`
-- `GET /analysis/latest`, `GET /analysis/runs`
-- `GET /catalogs`, `GET /catalogs/{catalog_name}`
-- `GET /reports/artifacts/latest`
+### Reports
+- `GET /reports/daily/latest` - Latest report with analysis run and artifacts
+- `GET /reports/daily/latest.md` - Latest report as markdown
+- `GET /reports/daily` - Historical reports
 
 ### PR Reviews (Deep Analysis)
-- `POST /reviews/pr/{pr_number}/run` (async by default)
-- `POST /reviews/pr/{pr_number}/run-sync`
-- `GET /reviews/pr/{pr_number}/job`, `GET /reviews/jobs/{job_id}`
-- `GET /reviews/pr/{pr_number}/latest`, `GET /reviews/pr/top`
-- `POST /reviews/run-open`
+- `POST /reviews/pr/{pr_number}/run` - Async review (returns immediately)
+- `POST /reviews/pr/{pr_number}/run-sync` - Sync review (waits for result)
+- `GET /reviews/pr/{pr_number}/job` - Get job status by PR number
+- `GET /reviews/jobs/{job_id}` - Get job status by job ID
+- `GET /reviews/pr/{pr_number}/latest` - Latest review result for PR
+- `GET /reviews/pr/top` - Top-rated reviews
 
 ### Queues
-- `GET /queues/needs-review`, `GET /queues/interesting-issues`
+- `GET /queues/needs-review` - PRs needing review (prioritized)
+- `GET /queues/interesting-issues` - Interesting issues (prioritized)
 
 ### Other
-- `GET /`, `GET /ui`, `GET /docs`, `GET /healthz`, `GET /stats`
-- `POST /webhooks/github`
+- `GET /` - API index
+- `GET /ui` - Web dashboard
+- `GET /docs` - OpenAPI documentation
+- `GET /healthz` - Health check
+- `GET /stats` - Service statistics
+- `POST /webhooks/github` - GitHub webhook receiver
 
 ## Skills System
 

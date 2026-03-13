@@ -125,12 +125,6 @@ def create_app(
             return True
         return any((r or "").strip().lower() == review_target_login for r in pr.requested_reviewers)
 
-    def _latest_analysis_items() -> list[AnalysisItem]:
-        latest_run = repo.latest_analysis_run()
-        if not latest_run:
-            return []
-        return latest_run.items
-
     def _execute_review(pr_number: int) -> dict:
         if pr_number not in repo.prs:
             fetched = snapshot_ingestor.sync_pr(pr_number)
@@ -801,28 +795,6 @@ def create_app(
         synced = snapshot_ingestor.sync_recent(per_page=per_page, max_pages=max_pages, since=since)
         return {"ok": True, "synced": synced}
 
-    @app.get("/analysis/latest")
-    def latest_analysis() -> dict:
-        run = repo.latest_analysis_run()
-        return {"ok": True, "analysis_run": run.model_dump() if run else None}
-
-    @app.get("/analysis/runs")
-    def list_analysis_runs(limit: int = 30, offset: int = 0) -> dict:
-        runs = [run.model_dump() for run in repo.list_analysis_runs(limit=limit, offset=offset)]
-        return {"ok": True, "runs": runs, "limit": limit, "offset": offset}
-
-    @app.get("/catalogs")
-    def list_catalogs() -> dict:
-        run = repo.latest_analysis_run()
-        if not run:
-            return {"ok": True, "catalogs": {}, "items": []}
-        return {"ok": True, "catalogs": run.catalog_counts, "items": [item.model_dump() for item in run.items]}
-
-    @app.get("/catalogs/{catalog_name}")
-    def catalog_items(catalog_name: str) -> dict:
-        items = [item.model_dump() for item in _latest_analysis_items() if catalog_name in item.catalogs]
-        return {"ok": True, "catalog": catalog_name, "items": items}
-
     @app.post("/reviews/pr/{pr_number}/run")
     def run_pr_review(pr_number: int, wait: bool = False) -> dict:
         if wait:
@@ -898,21 +870,6 @@ def create_app(
         out["mode"] = "sync"
         return out
 
-    @app.post("/reviews/run-open")
-    def run_open_pr_reviews(limit: int = 50) -> dict:
-        if limit < 1:
-            limit = 1
-        prs = sorted(repo.prs.values(), key=lambda p: p.updated_at, reverse=True)[:limit]
-        reviewed: list[int] = []
-        skipped: list[int] = []
-        for pr in prs:
-            out = pr_review_graph.invoke(pr.number)
-            if out.get("errors"):
-                skipped.append(pr.number)
-            else:
-                reviewed.append(pr.number)
-        return {"ok": True, "reviewed": reviewed, "skipped": skipped, "total": len(prs)}
-
     @app.get("/reviews/pr/{pr_number}/latest")
     def latest_pr_review(pr_number: int) -> dict:
         report = repo.latest_pr_review_report(pr_number)
@@ -947,13 +904,6 @@ def create_app(
     def list_reports(limit: int = 30, offset: int = 0) -> dict:
         reports = [r.model_dump() for r in repo.list_daily_reports(limit=limit, offset=offset)]
         return {"ok": True, "reports": reports, "limit": limit, "offset": offset}
-
-    @app.get("/reports/artifacts/latest")
-    def latest_report_artifacts() -> dict:
-        run = repo.latest_analysis_run()
-        if not run:
-            return {"ok": True, "artifacts": []}
-        return {"ok": True, "artifacts": [artifact.model_dump() for artifact in run.artifacts]}
 
     @app.get("/queues/needs-review", response_model=list[QueueItem])
     def needs_review() -> list[QueueItem]:

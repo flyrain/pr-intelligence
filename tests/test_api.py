@@ -330,32 +330,6 @@ def test_analysis_run_endpoint_returns_catalogs_and_report() -> None:
     assert payload["report"]["markdown"].startswith("# Executive Summary")
 
 
-def test_catalog_endpoint_reads_latest_analysis_run() -> None:
-    client, repo, _, _ = _client()
-    run = AnalysisRun(
-        artifacts=[],
-        items=[
-            AnalysisItem(
-                item_type="pr",
-                number=7,
-                title="Needs review",
-                url="https://example.com/pr/7",
-                score=3.0,
-                heuristic_reasons=["reviewers-requested"],
-                catalogs=["needs-review"],
-                updated_at=datetime.now(timezone.utc),
-            )
-        ],
-        catalog_counts={"needs-review": 1},
-    )
-    repo.save_analysis_run(run)
-
-    resp = client.get("/catalogs/needs-review")
-
-    assert resp.status_code == 200
-    assert resp.json()["items"][0]["number"] == 7
-
-
 def test_scores_recompute_endpoint_populates_queues() -> None:
     """Test that refresh endpoint (replacing scores/recompute) populates queues."""
     client, repo, _, _ = _client()
@@ -825,56 +799,6 @@ def test_pr_review_job_auto_expires_stuck_running(monkeypatch) -> None:
         body = client.get(f"/reviews/jobs/{job_id}").json()
     assert body["job"]["status"] == "failed"
     assert body["job"]["result"]["errors"] == ["job-timeout:0s"]
-
-
-def test_run_open_pr_reviews_endpoint() -> None:
-    client, repo, _, pr_review_graph = _client()
-    repo.upsert_pr(
-        PullRequestSnapshot(
-            number=10,
-            title="A",
-            body="",
-            state="open",
-            draft=False,
-            author="a",
-            labels=[],
-            requested_reviewers=[],
-            comments=0,
-            review_comments=0,
-            commits=1,
-            changed_files=1,
-            additions=1,
-            deletions=1,
-            html_url="https://example.com/pr/10",
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-    repo.upsert_pr(
-        PullRequestSnapshot(
-            number=11,
-            title="B",
-            body="",
-            state="open",
-            draft=False,
-            author="b",
-            labels=[],
-            requested_reviewers=[],
-            comments=0,
-            review_comments=0,
-            commits=1,
-            changed_files=1,
-            additions=1,
-            deletions=1,
-            html_url="https://example.com/pr/11",
-            updated_at=datetime.now(timezone.utc),
-        )
-    )
-
-    resp = client.post("/reviews/run-open", params={"limit": 2})
-    assert resp.status_code == 200
-    assert resp.json()["total"] == 2
-    assert len(resp.json()["reviewed"]) == 2
-    assert pr_review_graph.calls
 
 
 def test_pr_review_returns_not_found_when_fetch_fails() -> None:
