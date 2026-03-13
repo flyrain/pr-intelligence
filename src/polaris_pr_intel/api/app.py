@@ -790,11 +790,6 @@ def create_app(
             "notifications": out.get("notifications", []),
         }
 
-    @app.post("/sync/recent")
-    def sync_recent(per_page: int = 30, max_pages: int = 1, since: str | None = None) -> dict:
-        synced = snapshot_ingestor.sync_recent(per_page=per_page, max_pages=max_pages, since=since)
-        return {"ok": True, "synced": synced}
-
     @app.post("/reviews/pr/{pr_number}/run")
     def run_pr_review(pr_number: int, wait: bool = False) -> dict:
         if wait:

@@ -38,9 +38,9 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 - **Status tracking**: monitor queued/running/completed jobs via API
 
 ### 🔗 GitHub Integration
-- **Read-only REST API** for safe bulk syncing
+- **Read-only REST API** for safe data syncing
 - **Webhook support** for real-time event processing
-- **Selective syncing**: sync all, sync recent, or sync individual PRs
+- **Complete workflow**: single `/refresh` endpoint handles all updates
 
 ## Quick Start
 
