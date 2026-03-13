@@ -1,6 +1,6 @@
 # PR Intelligence (LangGraph + GitHub API)
 
-A service for monitoring a github repo pull requests and issues, scoring review priority, running LLM subagent deep reviews, and generating daily reports.
+A service for monitoring a github repo pull requests and issues, scoring review priority, running LLM-based PR reviews, and generating attention-oriented post-sync reports.
 
 License: Apache-2.0. See [LICENSE](LICENSE).
 
@@ -23,7 +23,7 @@ Open:
 
 ### Which command updates what?
 
-- Update **New/Updated PRs Today** tab data (from latest PR snapshots) and recompute queues:
+- Update raw synced GitHub data only:
 ```bash
 ./run.sh sync-all
 ```
@@ -36,8 +36,8 @@ By default this runs refresh first (`refresh=true`) and then:
 - sync open PRs/issues
 - prune stale locally-open PRs no longer open on GitHub
 - recompute review/issue signals
-- run post-sync derived analysis
-- generate multiple report artifacts plus a legacy markdown view
+- run post-sync derived analysis in a batched LLM call for the top PR slice
+- generate multiple report artifacts plus a legacy attention-report markdown view
 
 - Full refresh (recommended):
 ```bash
@@ -95,7 +95,7 @@ curl "http://127.0.0.1:8080/reports/daily/latest.md"
 ./run.sh serve                # start API server
 ./run.sh sync-all             # sync all open PRs/issues only
 ./run.sh sync                 # sync recent PRs/issues
-./run.sh report               # run derived analysis + print legacy daily report view
+./run.sh report               # run derived analysis + print legacy attention report view
 ./run.sh review 123           # async deep review for PR 123
 ./run.sh review-sync 123      # sync deep review for PR 123
 ./run.sh run-daily            # run daily graph via CLI
@@ -121,11 +121,14 @@ PORT=9090 ./run.sh serve
 - `STORE_BACKEND` (default: `sqlite`)
 - `SQLITE_PATH` (default: `.data/polaris_pr_intel.db`)
 - `REVIEW_JOB_WORKERS` (default: `1`; async PR review worker count, higher values increase concurrency)
+- `ANALYSIS_TOP_SLICE_LIMIT` (default: `10`; number of PRs sent to the report-analysis LLM per analysis run)
 
 ### LLM provider selection
 - `LLM_PROVIDER` (default: `claude_code_local`)
   - supported: `heuristic`, `openai`, `gemini`, `anthropic`, `claude_code_local`, `codex_local`
 - `LLM_MODEL` (optional; provider-specific default when unset)
+- `REVIEW_SKILL_FILE` (optional; skill used by individual PR review prompts)
+- `ANALYSIS_SKILL_FILE` (optional; skill used by post-sync report-analysis prompts)
 
 ### Local Claude Code provider
 - `CLAUDE_CODE_CMD` (default: `claude`)
@@ -169,9 +172,12 @@ PORT=9090 ./run.sh serve
 
 - Adapter layer is provider-agnostic.
 - Local providers (`claude_code_local`, `codex_local`) use your local repo path for code-aware analysis.
+- Individual PR review and post-sync report analysis intentionally use different prompt paths and different skills.
+- Post-sync report analysis batches the top PR slice into one LLM call instead of one call per PR.
 - If CLI execution fails or output parsing fails, adapters fall back to deterministic heuristic output.
 - Async review jobs are queued in-memory.
 - Repeated async requests for the same PR while a job is `queued`/`running` are deduplicated and return the existing `job_id` (`deduplicated: true`).
+- The service logs the configured LLM provider at startup and logs each CLI LLM invocation.
 
 ### Async Review Queue (Detailed)
 
@@ -258,7 +264,7 @@ flowchart LR
 - GitHub webhook ingestion (`pull_request`, `issues`, `issue_comment`, `pull_request_review`)
 - LangGraph event pipeline (summarization + deterministic scoring)
 - LangGraph PR deep review pipeline (subagents + aggregation)
-- Daily report pipeline
+- Post-sync derived analysis pipeline for attention reports and catalog routing
 - FastAPI + SQLite default persistence
 
 ### Code layout
@@ -276,7 +282,7 @@ flowchart LR
     GH["GitHub (Webhooks + REST API)"] --> API["FastAPI API Layer<br/>/webhooks, /sync, /reports, /queues"]
     CLI["CLI (polaris-pr-intel)"] --> API
     API --> EG["EventGraph (LangGraph)<br/>ingest -> route -> summarize/score"]
-    API --> DG["DailyReportGraph (LangGraph)<br/>generate -> publish"]
+    API --> DG["DailyReportGraph (LangGraph)<br/>analyze -> publish"]
     API --> ING["SnapshotIngestor"]
 
     ING --> GHC["GitHubClient (read-only GET)"]
@@ -285,7 +291,7 @@ flowchart LR
     EG --> A1["PRSummarizerAgent"]
     EG --> A2["ReviewNeedAgent + scoring.rules"]
     EG --> A3["IssueInsightAgent + scoring.rules"]
-    DG --> A4["DailyReporterAgent"]
+    DG --> A4["DerivedAnalysisAgent"]
     PRG["PRReviewGraph (LangGraph)<br/>load PR -> subagents -> aggregate -> persist"] --> STORE
     DG --> PUB["ConsolePublisher (extensible)"]
 
