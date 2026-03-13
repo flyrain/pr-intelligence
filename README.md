@@ -1,8 +1,46 @@
 # PR Intelligence (LangGraph + GitHub API)
 
-A service for monitoring a github repo pull requests and issues, scoring review priority, running LLM-based PR reviews, and generating attention-oriented post-sync reports.
+An intelligent GitHub repository monitoring service that leverages LangGraph and LLM agents to automate PR review prioritization, issue tracking, and daily reporting. Originally built for Apache Polaris, but configurable for any GitHub repository.
+
+**What it does:**
+- 🔍 **Smart PR Monitoring**: Automatically syncs and scores PRs based on staleness, size, and review requests
+- 🤖 **LLM-Powered Reviews**: Deep code analysis using configurable LLM providers (Claude Code, Anthropic, OpenAI, Gemini, or local CLI tools)
+- 📊 **Intelligent Reports**: Post-sync analysis generates actionable daily reports highlighting PRs and issues needing attention
+- ⚡ **Async Queue System**: Parallel PR review processing with configurable worker count
+- 🎯 **Priority Scoring**: Deterministic scoring rules identify the most important PRs and issues
+- 🔗 **Webhook Integration**: Real-time updates via GitHub webhooks
 
 License: Apache-2.0. See [LICENSE](LICENSE).
+
+## Key Capabilities
+
+### 🎯 Intelligent PR Prioritization
+- **Scoring rules** consider staleness (24h/72h thresholds), diff size, file count, and explicit review requests
+- **Configurable thresholds** let you tune what qualifies as "needs review"
+- **Target reviewer tracking**: automatically highlight PRs assigned to specific team members
+
+### 🤖 Multi-Provider LLM Support
+- **Local CLI providers**: Claude Code, Codex (code-aware with local repo context)
+- **Cloud providers**: Anthropic, OpenAI, Gemini
+- **Heuristic fallback**: deterministic output when LLM unavailable
+- **Custom skills**: separate prompts for deep PR reviews vs. batch report analysis
+
+### 📊 Automated Reporting
+- **Daily reports** with attention-focused summaries
+- **Catalog routing** for specialized PR categories (architecture, security, performance, etc.)
+- **Batch LLM analysis** processes multiple PRs efficiently in a single call
+- **Structured artifacts** accessible via REST API for integration with other tools
+
+### ⚡ Scalable Async Processing
+- **In-memory job queue** with configurable worker count
+- **Job deduplication**: prevents duplicate reviews for the same PR
+- **Timeout protection**: auto-fails stuck jobs after configurable duration
+- **Status tracking**: monitor queued/running/completed jobs via API
+
+### 🔗 GitHub Integration
+- **Read-only REST API** for safe bulk syncing
+- **Webhook support** for real-time event processing
+- **Selective syncing**: sync all, sync recent, or sync individual PRs
 
 ## Quick Start
 
@@ -23,23 +61,26 @@ Open:
 
 ### Which command updates what?
 
-- Update raw synced GitHub data only:
+- **Update raw synced GitHub data only:**
 ```bash
 ./run.sh sync-all
 ```
 
-- Generate/update derived analysis artifacts and **Latest Report** tab content:
+- **Generate/update derived analysis artifacts and Latest Report tab content:**
 ```bash
 ./run.sh report
 ```
 By default this runs refresh first (`refresh=true`) and then:
-- sync open PRs/issues
-- prune stale locally-open PRs no longer open on GitHub
-- recompute review/issue signals
-- run post-sync derived analysis in a batched LLM call for the top PR slice
-- generate multiple report artifacts plus a legacy attention-report markdown view
+- Syncs open PRs/issues from GitHub
+- Prunes stale locally-open PRs no longer open on GitHub
+- Recomputes review/issue priority scores using deterministic scoring rules
+- Runs post-sync derived analysis in a batched LLM call for the top PR slice (default: top 10)
+- Generates multiple report artifacts:
+  - **Analysis runs** with structured insights (available via `/analysis/latest` and `/analysis/runs`)
+  - **Catalog routing** for specialized PR categories (architecture, security, performance, etc.)
+  - **Legacy attention report** in markdown format (displayed in Latest Report tab)
 
-- Full refresh (recommended):
+- **Full refresh (recommended):**
 ```bash
 ./run.sh sync-all
 ./run.sh report
@@ -47,17 +88,27 @@ By default this runs refresh first (`refresh=true`) and then:
 
 ### 2) Typical workflow
 ```bash
-# 1. sync data
+# 1. Sync raw PR/issue data from GitHub
 ./run.sh sync-all
 
-# 2. run deep review on one PR (async)
+# 2. Queue a deep review for a specific PR (async - returns immediately with job_id)
 ./run.sh review 123
 
-# 3. or sync review on one PR (wait for result)
+# 3. Or run a blocking review that waits for completion (sync)
 ./run.sh review-sync 123
 
-# 4. generate report
+# 4. Generate analysis reports (runs batch LLM analysis on top PRs)
 ./run.sh report
+```
+
+**Note:** The review commands require the API server to be running in another terminal:
+```bash
+# Terminal 1: Start server
+./run.sh serve
+
+# Terminal 2: Run commands
+./run.sh sync-all
+./run.sh review 123
 ```
 
 ### 3) Common curl equivalents
@@ -117,11 +168,12 @@ PORT=9090 ./run.sh serve
 ### Common optional
 - `GITHUB_OWNER` (default: `apache`)
 - `GITHUB_REPO` (default: `polaris`)
-- `GITHUB_WEBHOOK_SECRET` (optional)
-- `STORE_BACKEND` (default: `sqlite`)
+- `GITHUB_WEBHOOK_SECRET` (optional; for webhook signature verification)
+- `STORE_BACKEND` (default: `sqlite`; options: `sqlite`, `memory`)
 - `SQLITE_PATH` (default: `.data/polaris_pr_intel.db`)
-- `REVIEW_JOB_WORKERS` (default: `1`; async PR review worker count, higher values increase concurrency)
-- `ANALYSIS_TOP_SLICE_LIMIT` (default: `10`; number of PRs sent to the report-analysis LLM per analysis run)
+- `REVIEW_JOB_WORKERS` (default: `1`; number of parallel async PR review workers. Increase for higher concurrency.)
+- `REVIEW_JOB_TIMEOUT_SEC` (default: `1200`; max time in seconds for a review job before marking as failed)
+- `ANALYSIS_TOP_SLICE_LIMIT` (default: `10`; number of top PRs sent to the report-analysis LLM per analysis run)
 
 ### LLM provider selection
 - `LLM_PROVIDER` (default: `claude_code_local`)
@@ -168,6 +220,26 @@ PORT=9090 ./run.sh serve
 - `POST /reviews/run-open`
 - `GET /queues/needs-review`, `GET /queues/interesting-issues`
 
+## Skills System
+
+The service uses **two separate skill files** for different analysis tasks:
+
+1. **`skills/polaris-pr-review/skill.md`** (individual PR reviews)
+   - Used by `PRReviewGraph` for deep, single-PR analysis
+   - Invoked via `/reviews/pr/{pr_number}/run`
+   - Runs multi-turn LLM conversations with subagents for comprehensive code review
+
+2. **`skills/polaris-report-analysis/skill.md`** (post-sync report analysis)
+   - Used by `DailyReportGraph` for batch analysis across top PRs
+   - Invoked via `/reports/daily/run` and `/analysis/run`
+   - Processes multiple PRs in a single LLM call for efficiency
+   - Generates derived analysis artifacts and attention-oriented reports
+
+This separation allows:
+- Different prompting strategies for deep vs. broad analysis
+- Independent skill evolution for different use cases
+- Better cost/performance trade-offs per task type
+
 ## Provider Notes
 
 - Adapter layer is provider-agnostic.
@@ -175,7 +247,7 @@ PORT=9090 ./run.sh serve
 - Individual PR review and post-sync report analysis intentionally use different prompt paths and different skills.
 - Post-sync report analysis batches the top PR slice into one LLM call instead of one call per PR.
 - If CLI execution fails or output parsing fails, adapters fall back to deterministic heuristic output.
-- Async review jobs are queued in-memory.
+- Async review jobs are queued in-memory (not persisted).
 - Repeated async requests for the same PR while a job is `queued`/`running` are deduplicated and return the existing `job_id` (`deduplicated: true`).
 - The service logs the configured LLM provider at startup and logs each CLI LLM invocation.
 
@@ -261,21 +333,46 @@ flowchart LR
 ## Architecture (Reference)
 
 ### Features
-- GitHub webhook ingestion (`pull_request`, `issues`, `issue_comment`, `pull_request_review`)
-- LangGraph event pipeline (summarization + deterministic scoring)
-- LangGraph PR deep review pipeline (subagents + aggregation)
-- Post-sync derived analysis pipeline for attention reports and catalog routing
-- FastAPI + SQLite default persistence
+- **GitHub webhook ingestion** (`pull_request`, `issues`, `issue_comment`, `pull_request_review`)
+- **LangGraph event pipeline** (summarization + deterministic scoring)
+- **LangGraph PR deep review pipeline** (subagents + aggregation)
+- **Post-sync derived analysis pipeline** for attention reports and catalog routing
+- **FastAPI REST API** with interactive UI and documentation
+- **SQLite default persistence** (with in-memory option for testing)
+- **Async review queue** with configurable worker count for parallel processing
 
 ### Code layout
-- `src/polaris_pr_intel/api` - FastAPI app
-- `src/polaris_pr_intel/github` - GitHub API client
-- `src/polaris_pr_intel/graphs` - LangGraph workflows
-- `src/polaris_pr_intel/agents` - task agents
-- `src/polaris_pr_intel/llm` - provider-agnostic LLM adapter layer
-- `src/polaris_pr_intel/store` - repository layer
-- `src/polaris_pr_intel/scoring` - deterministic scoring
-- `src/polaris_pr_intel/scheduler` - daily scheduler
+```
+src/polaris_pr_intel/
+├── api/              # FastAPI application and REST endpoints
+├── github/           # GitHub REST API client (read-only)
+├── graphs/           # LangGraph workflows
+│   ├── event_graph.py         # Event ingestion → summarize → score
+│   ├── daily_report_graph.py  # Analysis → report generation
+│   └── pr_review_graph.py     # Load PR → subagents → aggregate → persist
+├── agents/           # Task-specific agents
+│   ├── pr_summarizer.py       # PR summarization
+│   ├── review_need.py         # Review priority scoring
+│   ├── issue_insight.py       # Issue priority scoring
+│   ├── pr_reviewer.py         # Deep PR review orchestration
+│   ├── derived_analysis.py    # Post-sync batch analysis
+│   └── daily_reporter.py      # Report compilation
+├── llm/              # Provider-agnostic LLM adapter layer
+│   ├── base.py                # LLM interface
+│   ├── adapters.py            # Claude Code, Codex, API providers
+│   └── factory.py             # Provider instantiation
+├── store/            # Repository layer (SQLite + in-memory)
+├── scoring/          # Deterministic scoring rules
+├── scheduler/        # APScheduler daily job scheduling
+├── config.py         # Environment-based configuration
+└── main.py           # CLI entrypoint
+
+skills/
+├── polaris-pr-review/        # Individual PR review skill
+└── polaris-report-analysis/  # Batch report analysis skill
+
+tests/                         # Test suite (pytest)
+```
 
 ```mermaid
 flowchart LR
@@ -304,3 +401,97 @@ flowchart LR
 
     SCHED["DailyScheduler (APScheduler)"] --> DG
 ```
+
+## Development
+
+### Running Tests
+```bash
+# Install test dependencies
+./run.sh bootstrap
+
+# Run test suite
+pytest tests/
+
+# Run with coverage
+pytest --cov=polaris_pr_intel tests/
+```
+
+### Project Structure
+- **Python 3.11+** required
+- **uv** recommended for faster dependency management (auto-detected by `run.sh`)
+- **pyproject.toml** defines project metadata and dependencies
+- **uv.lock** locks exact dependency versions
+- **.venv/** virtual environment (if not using uv)
+
+### Adding New Features
+1. **New agent**: Add to `src/polaris_pr_intel/agents/`
+2. **New graph workflow**: Add to `src/polaris_pr_intel/graphs/`
+3. **New API endpoint**: Extend `src/polaris_pr_intel/api/app.py`
+4. **New LLM provider**: Implement in `src/polaris_pr_intel/llm/adapters.py`
+
+## Troubleshooting
+
+### Common Issues
+
+**Missing GITHUB_TOKEN**
+```
+RuntimeError: GITHUB_TOKEN is required
+```
+→ Set `export GITHUB_TOKEN=your_token_here` before running
+
+**LOCAL_REVIEW_REPO_DIR required for local providers**
+```
+RuntimeError: LOCAL_REVIEW_REPO_DIR must be set for claude_code_local provider
+```
+→ When using `claude_code_local` or `codex_local`, you must set:
+```bash
+export LOCAL_REVIEW_REPO_DIR=/path/to/your/local/repo
+```
+→ This directory should be a git clone of the repo you're monitoring
+
+**Server won't start / Port in use**
+```
+ERROR: [Errno 48] Address already in use
+```
+→ Change the port:
+```bash
+PORT=9090 ./run.sh serve
+```
+
+**Review jobs timeout**
+```
+Job timeout after 1200s
+```
+→ Increase timeout for large PRs:
+```bash
+export REVIEW_JOB_TIMEOUT_SEC=2400  # 40 minutes
+```
+
+**SQLite database locked**
+→ Ensure only one server instance is running. Check for zombie processes:
+```bash
+ps aux | grep polaris-pr-intel
+kill <pid>
+```
+
+**LLM provider errors**
+- Verify your API keys are set correctly
+- Check `claude`, `codex`, or other CLI tools are in PATH for local providers
+- Review logs for detailed error messages
+- Fall back to `heuristic` provider for testing: `export LLM_PROVIDER=heuristic`
+
+**Webhook signature verification fails**
+→ Ensure `GITHUB_WEBHOOK_SECRET` matches your GitHub webhook configuration
+
+### Debug Mode
+Enable verbose logging by checking application logs when running the server. The service logs:
+- LLM provider at startup
+- Each CLI LLM invocation
+- Webhook events received
+- Review job status changes
+
+### Data Storage
+- SQLite database: `.data/polaris_pr_intel.db` (default)
+- Change location: `export SQLITE_PATH=/path/to/db.sqlite`
+- Use in-memory storage for testing: `export STORE_BACKEND=memory`
+
