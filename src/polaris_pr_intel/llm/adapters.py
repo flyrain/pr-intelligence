@@ -292,11 +292,7 @@ Review the PR below. Use tools to read source files when the diff isn't enough.
 
 Write like a teammate leaving PR comments — short, casual, specific. No filler.
 
-Analyze the following aspects and respond with ONLY valid JSON containing an array of findings:
-1. code-risk: code risk and complexity
-2. test-impact: test impact and coverage
-3. docs-quality: documentation and release notes
-4. security-signal: security and permission model
+Analyze all four review aspects defined in the skill above (code-risk, test-impact, docs-quality, security-signal).
 
 Respond with ONLY valid JSON in this shape:
 {{
@@ -750,11 +746,7 @@ Code diff (patch):
 
 Analyze the pull request below across multiple aspects. You may inspect repository files for extra context if needed.
 
-Analyze the following aspects and respond with ONLY valid JSON containing an array of findings:
-1. code-risk: code risk and complexity
-2. test-impact: test impact and coverage
-3. docs-quality: documentation and release notes
-4. security-signal: security and permission model
+Analyze all four review aspects defined in the skill above (code-risk, test-impact, docs-quality, security-signal).
 
 Return ONLY valid JSON in this shape:
 {{

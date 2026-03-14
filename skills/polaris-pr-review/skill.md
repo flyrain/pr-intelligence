@@ -11,6 +11,38 @@ Perform a structured code review of a pull request in the Apache Polaris reposit
 
 Use when the user wants to review a PR — their own or someone else's — in the `apache/polaris` GitHub repo.
 
+## Review Aspects
+
+When conducting automated PR reviews (via the review queue system), analyze these four aspects:
+
+### 1. code-risk: Code Risk and Complexity
+- Architectural changes and refactoring scope
+- Code complexity and maintainability concerns
+- Potential bugs or edge cases
+- Breaking changes or API surface modifications
+- Build and dependency impacts
+
+### 2. test-impact: Test Impact and Coverage
+- Unit test coverage for new code
+- Integration test needs for new flows
+- Edge case testing (null handling, error cases, boundary conditions)
+- Test quality and effectiveness
+- Missing or disabled tests
+
+### 3. docs-quality: Documentation and Release Notes
+- CHANGELOG.md updates
+- Inline documentation (javadoc, comments)
+- API specification changes (OpenAPI)
+- README or user-facing documentation
+- PR description clarity
+
+### 4. security-signal: Security and Permission Model
+- Authorization and authentication changes
+- Privilege escalation risks
+- Security vulnerabilities (injection, XSS, etc.)
+- Secrets and credential handling
+- Trust boundaries and validation
+
 ## Review Workflow
 
 ### Step 1: Identify the PR
@@ -143,7 +175,8 @@ When generating markdown reports for automated PR reviews (via the review queue 
 - Generation timestamp
 
 ### Findings Section
-- Each finding from a subagent as a numbered section
+- One finding for each of the four review aspects (see "Review Aspects" above)
+- Each finding as a numbered section (1. code-risk, 2. test-impact, 3. docs-quality, 4. security-signal)
 - Include: agent name, focus area as section title
 - Verdict (LOW/MEDIUM/HIGH), Score, Confidence in bold
 - Summary subsection with detailed analysis
