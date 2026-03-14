@@ -177,8 +177,8 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
                 if line.startswith('## Review Aspects'):
                     in_aspects_section = True
                     continue
-                elif in_aspects_section and line.startswith('##'):
-                    # Hit next section, stop
+                elif in_aspects_section and line.startswith('## ') and not line.startswith('### '):
+                    # Hit next ## section (but not ###), stop
                     break
                 elif in_aspects_section and line.startswith('### '):
                     # Parse "### 1. code-risk: Code Risk and Complexity"
@@ -651,8 +651,8 @@ class CodexLocalAdapter(HeuristicLLMAdapter):
                 if line.startswith('## Review Aspects'):
                     in_aspects_section = True
                     continue
-                elif in_aspects_section and line.startswith('##'):
-                    # Hit next section, stop
+                elif in_aspects_section and line.startswith('## ') and not line.startswith('### '):
+                    # Hit next ## section (but not ###), stop
                     break
                 elif in_aspects_section and line.startswith('### '):
                     # Parse "### 1. code-risk: Code Risk and Complexity"
