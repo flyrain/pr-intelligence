@@ -1,239 +1,168 @@
 ---
 name: polaris-pr-review
-description: This skill should be used when the user asks to "review a PR", "review this PR", "check my PR", "review pull request", "look at PR #<number>", or any similar request to analyze a GitHub pull request in the Apache Polaris project. Provides structured PR review covering code correctness, test coverage, authorization/security patterns, Iceberg spec compliance, and Apache project conventions.
+description: Structured PR review for Apache Polaris covering code correctness, test coverage, authorization/security patterns, Iceberg spec compliance, and Apache project conventions.
 ---
 
 # Apache Polaris PR Review Skill
 
-Perform a structured code review of a pull request in the Apache Polaris repository.
-
-## When This Skill Applies
-
-Use when the user wants to review a PR — their own or someone else's — in the `apache/polaris` GitHub repo.
-
 ## Review Aspects
 
-When conducting automated PR reviews (via the review queue system), analyze these four aspects:
+Analyze PRs across these four dimensions. Each aspect should produce specific, actionable findings.
 
 ### 1. code-risk: Code Risk and Complexity
+
+**Focus areas:**
 - Architectural changes and refactoring scope
-- Code complexity and maintainability concerns
-- Potential bugs or edge cases
+- Code complexity and maintainability
 - Breaking changes or API surface modifications
 - Build and dependency impacts
 
+**Critical checks:**
+- No raw SQL or hardcoded catalog/namespace paths
+- Exception messages include context (entity name, namespace, catalog)
+- Use project exception types (`AlreadyExistsException`, `NotFoundException`, `ForbiddenException`) not raw `RuntimeException`
+- No silently swallowed exceptions — always log or rethrow
+- Avoid mutable static state
+- **No log-then-throw**: `LOG.error(msg); throw new Exception(msg)` is redundant — put message in exception, let caller/framework log
+- **Consolidate logging**: Multiple sequential `LOG.debug()` → single statement (split messages interleave with concurrent logs)
+- **No duplicated logic**: Extract repeated logic (credential checks, validation) to shared utilities
+- **Avoid exhaustive enum switches**: Prefer EnumSet declarations or type markers that don't require per-value updates
+- **Question unnecessary abstractions**: Don't force external integrations through internal intermediate representations
+
 ### 2. test-impact: Test Impact and Coverage
+
+**Focus areas:**
 - Unit test coverage for new code
 - Integration test needs for new flows
 - Edge case testing (null handling, error cases, boundary conditions)
 - Test quality and effectiveness
-- Missing or disabled tests
+
+**Critical checks:**
+- New behavior must have unit tests (`*Test.java`)
+- New end-to-end flows need integration tests (`*IT.java` with `@QuarkusTest` / `@TestProfile`)
+- Verify edge cases: overwrite=true/false, missing entity, insufficient privilege
+- Disabled tests (`@Disabled`, `[temp] Disable`) must have tracked issue or be re-enabled
 
 ### 3. docs-quality: Documentation and Release Notes
+
+**Focus areas:**
 - CHANGELOG.md updates
 - Inline documentation (javadoc, comments)
 - API specification changes (OpenAPI)
 - README or user-facing documentation
 - PR description clarity
 
+**Critical checks:**
+- ASF license header in every new file
+- PR title follows Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`)
+- `Fixes #<number>` at end of PR description if closing an issue
+- No `TODO` without corresponding tracked issue
+- No commented-out code
+- OpenAPI spec updated if API surface changed
+- Version bumps in `gradle.properties` or `bom/` are intentional
+
 ### 4. security-signal: Security and Permission Model
+
+**Focus areas:**
 - Authorization and authentication changes
 - Privilege escalation risks
 - Security vulnerabilities (injection, XSS, etc.)
 - Secrets and credential handling
 - Trust boundaries and validation
 
-## Review Workflow
-
-### Step 1: Identify the PR
-
-- If the user provides a PR number, fetch it: `gh pr view <number> --repo apache/polaris`
-- If on a feature branch, check current branch's PR: `gh pr view`
-- Get the diff: `gh pr diff <number> --repo apache/polaris` or `git diff main...HEAD`
-- List changed files: `gh pr diff <number> --name-only --repo apache/polaris`
-
-### Step 2: Understand the Change
-
-Read the PR title and description for:
-- The stated purpose/rationale
-- What issues/tickets it references (`Fixes #...`)
-- Whether the description is clear to someone with no prior context
-
-### Step 3: Review Changed Files
-
-Read relevant changed files from the diff. Focus on:
-- Core logic in `service/`, `api/`, `persistence/`, `catalog/`, `quarkus/`
-- Tests in `*Test.java` / `*IT.java` files
-- API specs in `spec/` or OpenAPI yaml files
-
-### Step 4: Apply These Review Checks
-
-#### Authorization & Security (highest priority)
-- All catalog operations must check `PolarisAuthorizableOperation` before executing
-- `authorizeAndValidate()` must be called before any data access
-- Privilege escalation: ensure callers cannot grant themselves more than they have
-- `TABLE_FULL_METADATA` vs `TABLE_READ_DATA` vs `TABLE_WRITE_DATA` scoping — verify the right privilege is used
-- `overwrite` paths must require full metadata privilege, not just read
-- Check for missing `null` guards on principal/role lookups
-
-#### Test Coverage
-- New behavior must have unit tests; new end-to-end flows need integration tests
-- Look for tests in `*Test.java` (unit) and `*IT.java` (integration/reg)
-- Verify edge cases: overwrite=true/false, missing entity, insufficient privilege
-- Check for `@QuarkusTest` / `@TestProfile` annotations for integration tests
-- Disabled tests (`@Disabled`, `[temp] Disable`) must have a tracked issue or be re-enabled
-
-#### Apache Iceberg Spec Compliance
-- `RegisterTable` operations must follow the Iceberg REST spec
-- Metadata location validation: verify it's within allowed storage paths
-- UUID handling: new registrations should get a new table UUID, not preserve old ones unless explicitly re-registering
-- `format-version` must be respected (1 vs 2 differences)
-
-#### Code Quality
-- No raw SQL or hardcoded catalog/namespace paths
-- Exception messages should include enough context (entity name, namespace, catalog)
-- Use project exception types (`AlreadyExistsException`, `NotFoundException`, `ForbiddenException`) not raw `RuntimeException`
-- Methods should not silently swallow exceptions — always log or rethrow
-- Avoid mutable static state
-- **No log-then-throw**: Flag `LOG.error(msg); throw new Exception(msg)` as redundant — put the message in the exception and let the caller/framework handle logging
-- **Consolidate debug logging**: Multiple sequential `LOG.debug()` calls should be a single log statement — split messages interleave with concurrent logs and are harder to read
-- **No duplicated logic across implementations**: If the same logic (e.g., credential checks, validation) appears in multiple implementations of an interface, it should be extracted to a shared utility class
-- **Maintainability over exhaustive enumeration**: Large switch statements that enumerate every enum value are a maintenance burden — prefer EnumSet declarations, annotations, or type markers that don't require per-value updates when enums change
-- **Question unnecessary abstraction layers**: If an external integration can map directly from the high-level operation type, don't force it through an internal intermediate representation. Keep external integrations decoupled from internal models
-
-#### Apache Project Conventions
-- ASF license header in every new file
-- PR title should follow Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`)
-- `Fixes #<number>` at end of PR description if closing an issue
-- No `TODO` without a corresponding tracked issue
-- No commented-out code left in
-
-#### Build & Format
-- Remind the user to run `./gradlew format compileAll` locally before merge
-- Check if the PR touches API surface — if so, OpenAPI spec update may be needed
-- If `gradle.properties` or `bom/` changed, verify version bumps are intentional
-
-### Step 5: Structure Your Output
-
-```
-## PR #<number>: <title>
-
-### Summary
-<2-3 sentences describing what this PR does>
-
-### Critical Issues (must fix before merge)
-- [AuthZ] <description> — `file:line`
-- [Correctness] <description> — `file:line`
-
-### Important Issues (should fix)
-- [Tests] <description>
-- [Spec] <description>
-
-### Suggestions (nice to have)
-- <description>
-
-### Strengths
-- <what's done well>
-
-### Checklist
-- [ ] ASF headers present on new files
-- [ ] Tests added for new behavior
-- [ ] Authorization checks correct
-- [ ] PR description explains rationale
-- [ ] Conventional Commits title
-- [ ] Linked issue (if applicable)
-
-### Verdict
-APPROVE / REQUEST CHANGES / COMMENT — <one-sentence summary>
-```
+**Critical checks (highest priority):**
+- All catalog operations check `PolarisAuthorizableOperation` before executing
+- `authorizeAndValidate()` called before any data access
+- Privilege escalation: callers cannot grant themselves more than they have
+- Correct privilege scoping: `TABLE_FULL_METADATA` vs `TABLE_READ_DATA` vs `TABLE_WRITE_DATA`
+- `overwrite` paths require full metadata privilege, not just read
+- Missing `null` guards on principal/role lookups
+- **Iceberg spec compliance**: `RegisterTable` follows REST spec, metadata location validated, UUID handling correct, `format-version` respected
 
 ## Review Style
 
-- Write like a teammate in a PR comment, not a formal report. Short, casual, plain English.
-- Keep summaries to 1-2 sentences max. No filler words, no hedging, no restating context the reader already has.
-- Recommendations should be punchy and specific — "add a test for X" not "consider adding comprehensive test coverage to verify the correctness of X across all scenarios"
-- Say "same issue" for repeated patterns, don't re-explain
-- Phrase things as questions when unsure ("does this handle the null case?"), statements when sure ("missing null guard on line 42")
-- Skip speculative or theoretical concerns — only flag things grounded in the actual diff
-- Prioritize maintainability over exhaustive security analysis of hypothetical scenarios
+- **Tone**: Teammate in PR comment, not formal report. Short, casual, plain English
+- **Brevity**: 1-2 sentences max. No filler, no hedging, no restating context
+- **Specificity**: "add test for X" not "consider adding comprehensive test coverage to verify correctness of X across all scenarios"
+- **Efficiency**: Say "same issue" for repeated patterns, don't re-explain
+- **Uncertainty**: Questions when unsure ("does this handle null?"), statements when sure ("missing null guard line 42")
+- **Grounded**: Skip speculative concerns — only flag things in the actual diff
+- **Pragmatic**: Prioritize maintainability over exhaustive security analysis of hypothetical scenarios
 
 ## Automated Review Output Format
 
-When conducting automated PR reviews (via the review queue system), return findings as JSON with these fields:
-
 ### Verdict Levels
-- **low**: Minor issues, safe to merge with optional improvements
-- **medium**: Notable concerns that should be addressed, but not blocking
-- **high**: Critical issues that must be fixed before merge
-
-### Scoring Guidance
-- **score** (0.0-1.0): Overall risk/priority level for this aspect
-  - 0.0-0.3: Low concern
-  - 0.3-0.7: Medium concern
-  - 0.7-1.0: High concern
-- **confidence** (0.0-1.0): How confident you are in this assessment
-  - Use lower confidence when diff context is limited or behavior is ambiguous
-
-### Catalog Suggestions
-Suggest which reporting catalogs this PR belongs in:
-- **needs-review**: Ready for human review, should be prioritized
-- **aging-prs**: Stale PRs that may need a nudge
-- **security-risk**: Auth, permissions, secrets, trust boundaries, security-sensitive changes
-- **release-risk**: Broad changes, risky diffs, regression potential, rollout concerns
-- **interesting-issues**: Not typically applicable for PRs
-- **recently-updated**: Fresh activity that deserves attention
+- **low** (0.0-0.3): Minor issues, safe to merge with optional improvements
+- **medium** (0.3-0.7): Notable concerns that should be addressed, not blocking
+- **high** (0.7-1.0): Critical issues that must be fixed before merge
 
 ### Output Fields
-- **agent_name**: The review aspect identifier (code-risk, test-impact, docs-quality, security-signal)
-- **focus_area**: The aspect's focus area description
-- **verdict**: low, medium, or high (see above)
-- **score**: 0.0-1.0 numeric risk assessment (see above)
-- **summary**: 1-3 short sentences, plain English, no jargon padding
-- **recommendations**: Array of short actionable items (e.g. "add null guard in Foo.java:42")
-- **tags**: Optional short tags for categorization
-- **suggested_catalogs**: Array of catalog names (see above)
-- **confidence**: 0.0-1.0 confidence level (see above)
+Return one finding per aspect as JSON:
+- **agent_name**: Aspect identifier (code-risk, test-impact, docs-quality, security-signal)
+- **focus_area**: Aspect description
+- **verdict**: low, medium, or high
+- **score**: 0.0-1.0 numeric risk level
+- **confidence**: 0.0-1.0 assessment confidence (lower when context limited or behavior ambiguous)
+- **summary**: 1-3 short sentences, plain English, no jargon
+- **recommendations**: Array of actionable items with file:line references (e.g. "add null guard in Foo.java:42")
+- **tags**: Short categorization tags
+- **suggested_catalogs**: Array from: `needs-review`, `aging-prs`, `security-risk`, `release-risk`, `recently-updated`
 
-## Automated Review Report Format
+### Catalog Guidance
+- **needs-review**: Ready for human review, prioritize
+- **aging-prs**: Stale, needs nudge
+- **security-risk**: Auth, permissions, secrets, trust boundaries
+- **release-risk**: Broad changes, regression potential, rollout concerns
+- **recently-updated**: Fresh activity deserving attention
 
-When generating markdown reports for automated PR reviews (via the review queue system), structure the output as follows:
+## Markdown Report Format
 
-### Header Section
-- **Title:** `# PR #{number}: {title}`
-- **Metadata line 1:** Author, State, Draft status
-- **Metadata line 2:** Labels (comma-separated), Requested reviewers (comma-separated)
-- **Metadata line 3:** Last updated timestamp, Diff statistics (files/additions/deletions)
-- **Metadata line 4:** Direct GitHub URL link
+For automated review reports, structure markdown as:
 
-### Review Analysis Section
-- Overall priority score (0-10 scale)
-- Overall recommendation (text summary)
-- Provider and model information
-- Generation timestamp
+**Header:**
+```markdown
+# PR #{number}: {title}
 
-### Findings Section
-- One finding for each of the four review aspects (see "Review Aspects" above)
-- Each finding as a numbered section (1. code-risk, 2. test-impact, 3. docs-quality, 4. security-signal)
-- Include: agent name, focus area as section title
-- Verdict (LOW/MEDIUM/HIGH), Score, Confidence in bold
-- Summary subsection with detailed analysis
-- Recommendations subsection as bullet list (if any)
-- Tags at the end (if any)
-- Horizontal rule separator between findings
+**Author:** @{author} | **State:** {state} | **Draft:** {draft}
+**Labels:** {labels} | **Reviewers:** {reviewers}
+**Updated:** {timestamp UTC} | **Stats:** {N} files, +{adds}/-{dels} lines
+**GitHub:** {url}
+```
 
-### Formatting Guidelines
-- Use bold (`**text**`) for field labels
-- Use horizontal rules (`---`) to separate major sections
-- Use proper heading hierarchy: `#` for title, `##` for major sections, `###` for findings, `####` for subsections
-- Keep metadata compact (multiple fields per line with `|` separator)
-- Make labels, reviewers, and tags comma-separated lists
-- Format timestamps as YYYY-MM-DD HH:MM:SS UTC
-- Show diff stats as: `N files, +additions/-deletions lines`
+**Review Analysis:**
+```markdown
+## Review Analysis
+
+**Overall Priority:** {score 0.0-1.0}
+**Recommendation:** {text}
+**Provider:** {provider} ({model})
+**Generated:** {timestamp UTC}
+```
+
+**Findings:**
+```markdown
+## Findings
+
+### 1. {agent_name}: {focus_area}
+
+**Verdict:** {LOW|MEDIUM|HIGH} | **Score:** {0.00} | **Confidence:** {0.00}
+
+#### Summary
+{text}
+
+#### Recommendations
+- {item}
+
+**Tags:** {tag1, tag2}
+
+---
+```
 
 ## Tips
 
 - Focus on the diff, not the whole codebase
-- For authorization bugs, trace the call from the REST handler down through the service layer
-- Reference `references/auth-patterns.md` for authorization decision patterns in this codebase
-- If unsure about the Iceberg spec behavior, note it as a question for the PR author rather than a blocker
-- When multiple places have the same issue, call it out once with detail, then reference it briefly elsewhere
+- For authorization bugs, trace from REST handler through service layer
+- Reference `references/auth-patterns.md` for authorization patterns
+- Note Iceberg spec questions for PR author rather than blocking
+- Call out repeated issues once with detail, reference briefly elsewhere
+- Remind to run `./gradlew format compileAll` before merge
