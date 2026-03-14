@@ -31,6 +31,19 @@ def _log_cli_invocation(provider: str, cmd: list[str], prompt: str) -> None:
 class HeuristicLLMAdapter:
     provider: str = "heuristic"
     model: str = "local-heuristic"
+    # Default review aspects - override in subclasses by parsing from skill file
+    review_aspects: list[tuple[str, str]] = None
+
+    def __post_init__(self):
+        if self.review_aspects is None:
+            # Failsafe defaults that mirror skill.md structure
+            # TODO: Parse these from skill file in adapter subclasses
+            self.review_aspects = [
+                ("code-risk", "code risk and complexity"),
+                ("test-impact", "test impact and coverage"),
+                ("docs-quality", "documentation and release notes"),
+                ("security-signal", "security and permission model"),
+            ]
 
     def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
         churn = pr.additions + pr.deletions
@@ -97,12 +110,10 @@ class HeuristicLLMAdapter:
         )
 
     def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
-        """Comprehensive PR review covering all aspects. Heuristic fallback generates findings for all areas."""
+        """Comprehensive PR review covering all aspects. Uses review_aspects from skill or defaults."""
         return [
-            self.analyze_pr("code-risk", "code risk and complexity", pr),
-            self.analyze_pr("test-impact", "test impact and coverage", pr),
-            self.analyze_pr("docs-quality", "documentation and release notes", pr),
-            self.analyze_pr("security-signal", "security and permission model", pr),
+            self.analyze_pr(agent_name, focus_area, pr)
+            for agent_name, focus_area in self.review_aspects
         ]
 
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
@@ -143,6 +154,42 @@ class ClaudeCodeLocalAdapter(HeuristicLLMAdapter):
     repo_dir: str = ""
     review_skill_file: str = ""
     analysis_skill_file: str = ""
+
+    def __post_init__(self):
+        # Parse review aspects from skill file if available
+        if self.review_skill_file:
+            aspects = self._parse_review_aspects(self.review_skill_file)
+            if aspects:
+                self.review_aspects = aspects
+        # Fall back to parent's defaults if parsing fails
+        super().__post_init__()
+
+    def _parse_review_aspects(self, skill_file: str) -> list[tuple[str, str]] | None:
+        """Parse review aspects from skill file 'Review Aspects' section."""
+        if not skill_file:
+            return None
+        try:
+            text = Path(skill_file).expanduser().read_text(encoding="utf-8")
+            # Look for "## Review Aspects" section
+            aspects = []
+            in_aspects_section = False
+            for line in text.split('\n'):
+                if line.startswith('## Review Aspects'):
+                    in_aspects_section = True
+                    continue
+                elif in_aspects_section and line.startswith('##'):
+                    # Hit next section, stop
+                    break
+                elif in_aspects_section and line.startswith('### '):
+                    # Parse "### 1. code-risk: Code Risk and Complexity"
+                    match = re.match(r'###\s+\d+\.\s+([a-z-]+):\s+(.+)', line)
+                    if match:
+                        agent_name = match.group(1)
+                        focus_area = match.group(2)
+                        aspects.append((agent_name, focus_area))
+            return aspects if aspects else None
+        except Exception:
+            return None
 
     def _load_skill_prompt(self, skill_file: str) -> str:
         """Load skill content from skill_file path if it exists.
@@ -581,6 +628,42 @@ class CodexLocalAdapter(HeuristicLLMAdapter):
     repo_dir: str = ""
     review_skill_file: str = ""
     analysis_skill_file: str = ""
+
+    def __post_init__(self):
+        # Parse review aspects from skill file if available
+        if self.review_skill_file:
+            aspects = self._parse_review_aspects(self.review_skill_file)
+            if aspects:
+                self.review_aspects = aspects
+        # Fall back to parent's defaults if parsing fails
+        super().__post_init__()
+
+    def _parse_review_aspects(self, skill_file: str) -> list[tuple[str, str]] | None:
+        """Parse review aspects from skill file 'Review Aspects' section."""
+        if not skill_file:
+            return None
+        try:
+            text = Path(skill_file).expanduser().read_text(encoding="utf-8")
+            # Look for "## Review Aspects" section
+            aspects = []
+            in_aspects_section = False
+            for line in text.split('\n'):
+                if line.startswith('## Review Aspects'):
+                    in_aspects_section = True
+                    continue
+                elif in_aspects_section and line.startswith('##'):
+                    # Hit next section, stop
+                    break
+                elif in_aspects_section and line.startswith('### '):
+                    # Parse "### 1. code-risk: Code Risk and Complexity"
+                    match = re.match(r'###\s+\d+\.\s+([a-z-]+):\s+(.+)', line)
+                    if match:
+                        agent_name = match.group(1)
+                        focus_area = match.group(2)
+                        aspects.append((agent_name, focus_area))
+            return aspects if aspects else None
+        except Exception:
+            return None
 
     def _load_skill_prompt(self, skill_file: str) -> str:
         if not skill_file:
