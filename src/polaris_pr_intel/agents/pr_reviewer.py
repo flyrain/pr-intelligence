@@ -1,38 +1,18 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-
 from polaris_pr_intel.llm.base import LLMAdapter
 from polaris_pr_intel.models import PRReviewReport, PRSubagentFinding, PullRequestSnapshot
 
 
-@dataclass(frozen=True)
-class PRSubagentSpec:
-    agent_name: str
-    focus_area: str
-
-
 class PRSubagentReviewer:
+    """Single-agent PR reviewer that analyzes all aspects in one comprehensive pass."""
+
     def __init__(self, llm: LLMAdapter) -> None:
         self.llm = llm
-        self.specs = [
-            PRSubagentSpec(agent_name="code-risk", focus_area="code risk and complexity"),
-            PRSubagentSpec(agent_name="test-impact", focus_area="test impact and coverage"),
-            PRSubagentSpec(agent_name="docs-quality", focus_area="documentation and release notes"),
-            PRSubagentSpec(agent_name="security-signal", focus_area="security and permission model"),
-        ]
 
     def run(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
-        findings: list[PRSubagentFinding] = []
-        with ThreadPoolExecutor(max_workers=len(self.specs)) as pool:
-            futures = {
-                pool.submit(self.llm.analyze_pr, spec.agent_name, spec.focus_area, pr): spec
-                for spec in self.specs
-            }
-            for future in as_completed(futures):
-                findings.append(future.result())
-        return findings
+        """Run comprehensive PR review covering all aspects (code risk, security, tests, docs)."""
+        return self.llm.analyze_pr_comprehensive(pr)
 
     def aggregate(self, pr: PullRequestSnapshot, findings: list[PRSubagentFinding]) -> PRReviewReport:
         if not findings:

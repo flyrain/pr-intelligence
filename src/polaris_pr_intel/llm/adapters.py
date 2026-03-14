@@ -96,6 +96,15 @@ class HeuristicLLMAdapter:
             confidence=0.65,
         )
 
+    def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
+        """Comprehensive PR review covering all aspects. Heuristic fallback generates findings for all areas."""
+        return [
+            self.analyze_pr("code-risk", "code risk and complexity", pr),
+            self.analyze_pr("test-impact", "test impact and coverage", pr),
+            self.analyze_pr("docs-quality", "documentation and release notes", pr),
+            self.analyze_pr("security-signal", "security and permission model", pr),
+        ]
+
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
         return self.analyze_pr("catalog-router", "catalog routing and prioritization", pr)
 
@@ -262,6 +271,67 @@ PR description:
 {pr.body[:4000]}
 {diff_section}"""
 
+    def _build_comprehensive_prompt(self, pr: PullRequestSnapshot) -> str:
+        """Build prompt for comprehensive single-pass PR review covering all aspects."""
+        review_skill_prompt = self._load_skill_prompt(self.review_skill_file)
+        diff_section = ""
+        if pr.diff_text:
+            truncated_diff = pr.diff_text[:80_000]
+            if len(pr.diff_text) > 80_000:
+                truncated_diff += "\n... (diff truncated)"
+            diff_section = f"""
+
+Code diff (patch):
+```
+{truncated_diff}
+```
+"""
+        return f"""{review_skill_prompt + chr(10) + chr(10) if review_skill_prompt else ""}You are conducting a comprehensive code review covering multiple aspects.
+
+Review the PR below. Use tools to read source files when the diff isn't enough.
+
+Write like a teammate leaving PR comments — short, casual, specific. No filler.
+
+Analyze the following aspects and respond with ONLY valid JSON containing an array of findings:
+1. code-risk: code risk and complexity
+2. test-impact: test impact and coverage
+3. docs-quality: documentation and release notes
+4. security-signal: security and permission model
+
+Respond with ONLY valid JSON in this shape:
+{{
+  "findings": [
+    {{
+      "agent_name": "code-risk|test-impact|docs-quality|security-signal",
+      "focus_area": "corresponding focus area",
+      "verdict": "low|medium|high",
+      "score": 0.0-1.0,
+      "summary": "1-2 short sentences, plain English, no jargon padding",
+      "recommendations": ["short actionable item, e.g. 'add null guard in Foo.java:42'"],
+      "tags": ["optional-short-tag"],
+      "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
+      "confidence": 0.0-1.0
+    }}
+  ]
+}}
+
+Pull request metadata:
+- number: {pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+PR description:
+{pr.body[:4000]}
+{diff_section}"""
+
     def _build_catalog_prompt(self, pr: PullRequestSnapshot) -> str:
         analysis_skill_prompt = self._load_skill_prompt(self.analysis_skill_file)
         diff_section = ""
@@ -337,6 +407,42 @@ PR description:
             fallback = super().analyze_pr(agent_name, focus_area, pr)
             fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
             return fallback
+
+    def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
+        """Run comprehensive single-pass review covering all aspects."""
+        prompt = self._build_comprehensive_prompt(pr)
+        try:
+            payload = self._run_raw_prompt(prompt)
+            if not isinstance(payload, dict):
+                raise ValueError("Expected JSON object from model")
+            findings_data = payload.get("findings")
+            if not isinstance(findings_data, list):
+                raise ValueError("Expected 'findings' array in response")
+
+            findings: list[PRSubagentFinding] = []
+            for item in findings_data:
+                if not isinstance(item, dict):
+                    continue
+                finding = PRSubagentFinding.model_validate(item)
+                finding.score = _clamp(finding.score, 0.0, 1.0)
+                finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+                findings.append(finding)
+
+            if not findings:
+                raise ValueError("No valid findings extracted from response")
+            return findings
+        except Exception as exc:
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            if "Failed to authenticate" in detail or "API Error: 401" in detail or "Not logged in" in detail:
+                raise RuntimeError(
+                    "claude-code-local authentication failed. Run `claude auth login` (or `claude setup-token`) and retry."
+                ) from exc
+            # Fallback to heuristic multi-finding
+            return super().analyze_pr_comprehensive(pr)
 
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_catalog_prompt(pr)
@@ -625,6 +731,65 @@ PR description:
 {pr.body[:4000]}
 {diff_section}"""
 
+    def _build_comprehensive_prompt(self, pr: PullRequestSnapshot) -> str:
+        """Build prompt for comprehensive single-pass PR review covering all aspects."""
+        skill_prompt = self._load_skill_prompt(self.review_skill_file)
+        diff_section = ""
+        if pr.diff_text:
+            truncated_diff = pr.diff_text[:80_000]
+            if len(pr.diff_text) > 80_000:
+                truncated_diff += "\n... (diff truncated)"
+            diff_section = f"""
+
+Code diff (patch):
+```
+{truncated_diff}
+```
+"""
+        return f"""{skill_prompt + chr(10) + chr(10) if skill_prompt else ""}You are conducting a comprehensive PR code review.
+
+Analyze the pull request below across multiple aspects. You may inspect repository files for extra context if needed.
+
+Analyze the following aspects and respond with ONLY valid JSON containing an array of findings:
+1. code-risk: code risk and complexity
+2. test-impact: test impact and coverage
+3. docs-quality: documentation and release notes
+4. security-signal: security and permission model
+
+Return ONLY valid JSON in this shape:
+{{
+  "findings": [
+    {{
+      "agent_name": "code-risk|test-impact|docs-quality|security-signal",
+      "focus_area": "corresponding focus area",
+      "verdict": "low|medium|high",
+      "score": 0.0-1.0,
+      "summary": "2-3 sentence analysis with specific findings from the code",
+      "recommendations": ["specific actionable item referencing code"],
+      "tags": ["optional-short-tag"],
+      "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
+      "confidence": 0.0-1.0
+    }}
+  ]
+}}
+
+Pull request metadata:
+- number: {pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+PR description:
+{pr.body[:4000]}
+{diff_section}"""
+
     def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_prompt(agent_name, focus_area, pr)
         try:
@@ -638,6 +803,33 @@ PR description:
                 detail = stderr or stdout or detail
             fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
             return fallback
+
+    def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
+        """Run comprehensive single-pass review covering all aspects."""
+        prompt = self._build_comprehensive_prompt(pr)
+        try:
+            payload = self._run_raw_prompt(prompt)
+            if not isinstance(payload, dict):
+                raise ValueError("Expected JSON object from model")
+            findings_data = payload.get("findings")
+            if not isinstance(findings_data, list):
+                raise ValueError("Expected 'findings' array in response")
+
+            findings: list[PRSubagentFinding] = []
+            for item in findings_data:
+                if not isinstance(item, dict):
+                    continue
+                finding = PRSubagentFinding.model_validate(item)
+                finding.score = _clamp(finding.score, 0.0, 1.0)
+                finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+                findings.append(finding)
+
+            if not findings:
+                raise ValueError("No valid findings extracted from response")
+            return findings
+        except Exception as exc:
+            # Fallback to heuristic multi-finding
+            return super().analyze_pr_comprehensive(pr)
 
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_catalog_prompt(pr)
