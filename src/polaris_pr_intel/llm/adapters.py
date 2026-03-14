@@ -288,18 +288,16 @@ Code diff (patch):
 """
         return f"""{review_skill_prompt + chr(10) + chr(10) if review_skill_prompt else ""}You are conducting a comprehensive code review covering multiple aspects.
 
-Review the PR below. Use tools to read source files when the diff isn't enough.
+Review the PR below according to the review aspects defined in the skill above. Use tools to read source files when the diff isn't enough.
 
 Write like a teammate leaving PR comments — short, casual, specific. No filler.
-
-Analyze all four review aspects defined in the skill above (code-risk, test-impact, docs-quality, security-signal).
 
 Respond with ONLY valid JSON in this shape:
 {{
   "findings": [
     {{
-      "agent_name": "code-risk|test-impact|docs-quality|security-signal",
-      "focus_area": "corresponding focus area",
+      "agent_name": "aspect identifier from skill",
+      "focus_area": "aspect focus area from skill",
       "verdict": "low|medium|high",
       "score": 0.0-1.0,
       "summary": "1-2 short sentences, plain English, no jargon padding",
@@ -744,16 +742,14 @@ Code diff (patch):
 """
         return f"""{skill_prompt + chr(10) + chr(10) if skill_prompt else ""}You are conducting a comprehensive PR code review.
 
-Analyze the pull request below across multiple aspects. You may inspect repository files for extra context if needed.
-
-Analyze all four review aspects defined in the skill above (code-risk, test-impact, docs-quality, security-signal).
+Analyze the pull request below according to the review aspects defined in the skill above. You may inspect repository files for extra context if needed.
 
 Return ONLY valid JSON in this shape:
 {{
   "findings": [
     {{
-      "agent_name": "code-risk|test-impact|docs-quality|security-signal",
-      "focus_area": "corresponding focus area",
+      "agent_name": "aspect identifier from skill",
+      "focus_area": "aspect focus area from skill",
       "verdict": "low|medium|high",
       "score": 0.0-1.0,
       "summary": "2-3 sentence analysis with specific findings from the code",
