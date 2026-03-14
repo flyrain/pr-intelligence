@@ -347,7 +347,7 @@ def create_app(
                 "<details class=\"review-detail\">"
                 "<summary>"
                 f"<span><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a> · {escape(pr.title)}</span>"
-                f"<span>priority={report.overall_priority:.2f} · <a href=\"/reviews/pr/{pr.number}/latest.md\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"view-report-link\">View Report</a></span>"
+                f"<span>priority={report.overall_priority:.2f} · <a href=\"/reviews/pr/{pr.number}/latest.html\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"view-report-link\">View Report</a></span>"
                 "</summary>"
                 f"<p class=\"muted\">Provider: {escape(report.provider)} | Model: {escape(report.model)} | Recommendation: {escape(report.overall_recommendation)}</p>"
                 f"{''.join(findings_html) if findings_html else '<p>No findings.</p>'}"
@@ -890,11 +890,21 @@ def create_app(
             return f"# PR #{pr_number} Review\n\nNo review has been generated yet.\n"
 
         pr = repo.prs.get(pr_number)
-        pr_title = pr.title if pr else f"PR #{pr_number}"
+        if not pr:
+            return f"# PR #{pr_number} Review\n\nPR not found in database.\n"
 
-        # Build markdown
+        # Build header with PR metadata
         lines = [
-            f"# PR #{pr_number}: {pr_title}",
+            f"# PR #{pr.number}: {pr.title}",
+            "",
+            f"**Author:** @{pr.author} | **State:** {pr.state} | **Draft:** {'Yes' if pr.draft else 'No'}",
+            f"**Labels:** {', '.join(pr.labels) if pr.labels else 'None'} | **Reviewers:** {', '.join(pr.requested_reviewers) if pr.requested_reviewers else 'None'}",
+            f"**Updated:** {pr.updated_at.strftime('%Y-%m-%d %H:%M:%S UTC')} | **Stats:** {pr.changed_files} files, +{pr.additions}/-{pr.deletions} lines",
+            f"**GitHub:** {pr.html_url}",
+            "",
+            "---",
+            "",
+            "## Review Analysis",
             "",
             f"**Overall Priority:** {report.overall_priority:.2f}",
             f"**Recommendation:** {report.overall_recommendation}",
@@ -903,6 +913,8 @@ def create_app(
             "",
             "---",
             "",
+            "## Findings",
+            "",
         ]
 
         if not report.findings:
@@ -910,17 +922,17 @@ def create_app(
         else:
             for i, finding in enumerate(report.findings, 1):
                 lines.extend([
-                    f"## {i}. {finding.agent_name}: {finding.focus_area}",
+                    f"### {i}. {finding.agent_name}: {finding.focus_area}",
                     "",
                     f"**Verdict:** {finding.verdict.upper()} | **Score:** {finding.score:.2f} | **Confidence:** {finding.confidence:.2f}",
                     "",
-                    f"### Summary",
+                    f"#### Summary",
                     finding.summary,
                     "",
                 ])
 
                 if finding.recommendations:
-                    lines.append("### Recommendations")
+                    lines.append("#### Recommendations")
                     for rec in finding.recommendations:
                         lines.append(f"- {rec}")
                     lines.append("")
@@ -933,6 +945,172 @@ def create_app(
                 lines.append("")
 
         return "\n".join(lines)
+
+    @app.get("/reviews/pr/{pr_number}/latest.html", response_class=HTMLResponse)
+    def latest_pr_review_html(pr_number: int) -> str:
+        # Get the markdown content
+        markdown_content = latest_pr_review_markdown(pr_number)
+
+        # Wrap in HTML with styling and markdown renderer
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PR #{pr_number} Review</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #24292f;
+            background: #f6f8fa;
+            padding: 20px;
+        }}
+
+        .container {{
+            max-width: 980px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }}
+
+        h1 {{
+            font-size: 2em;
+            margin-bottom: 0.5em;
+            padding-bottom: 0.3em;
+            border-bottom: 1px solid #d0d7de;
+            color: #0969da;
+        }}
+
+        h2 {{
+            font-size: 1.5em;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            padding-bottom: 0.3em;
+            border-bottom: 1px solid #d0d7de;
+        }}
+
+        h3 {{
+            font-size: 1.25em;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+        }}
+
+        h4 {{
+            font-size: 1.1em;
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            color: #57606a;
+        }}
+
+        p {{
+            margin-bottom: 1em;
+        }}
+
+        strong {{
+            color: #24292f;
+            font-weight: 600;
+        }}
+
+        a {{
+            color: #0969da;
+            text-decoration: none;
+        }}
+
+        a:hover {{
+            text-decoration: underline;
+        }}
+
+        hr {{
+            border: none;
+            border-top: 1px solid #d0d7de;
+            margin: 1.5em 0;
+        }}
+
+        ul, ol {{
+            margin-left: 2em;
+            margin-bottom: 1em;
+        }}
+
+        li {{
+            margin-bottom: 0.25em;
+        }}
+
+        code {{
+            background: #f6f8fa;
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 0.9em;
+        }}
+
+        pre {{
+            background: #f6f8fa;
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-bottom: 1em;
+        }}
+
+        pre code {{
+            background: none;
+            padding: 0;
+        }}
+
+        .back-link {{
+            display: inline-block;
+            margin-bottom: 20px;
+            padding: 8px 16px;
+            background: #f6f8fa;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            color: #24292f;
+            text-decoration: none;
+            font-size: 0.9em;
+        }}
+
+        .back-link:hover {{
+            background: #eaeef2;
+            text-decoration: none;
+        }}
+
+        @media (max-width: 768px) {{
+            body {{
+                padding: 10px;
+            }}
+
+            .container {{
+                padding: 20px;
+            }}
+
+            h1 {{
+                font-size: 1.5em;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/ui" class="back-link">&larr; Back to Dashboard</a>
+        <div id="content"></div>
+    </div>
+
+    <script>
+        const markdown = {json.dumps(markdown_content)};
+        document.getElementById('content').innerHTML = marked.parse(markdown);
+    </script>
+</body>
+</html>"""
+        return html
 
     @app.get("/reviews/pr/top")
     def top_pr_reviews(limit: int = 20) -> dict:

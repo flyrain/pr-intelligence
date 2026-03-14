@@ -125,6 +125,41 @@ APPROVE / REQUEST CHANGES / COMMENT — <one-sentence summary>
 - Skip speculative or theoretical concerns — only flag things grounded in the actual diff
 - Prioritize maintainability over exhaustive security analysis of hypothetical scenarios
 
+## Automated Review Report Format
+
+When generating markdown reports for automated PR reviews (via the review queue system), structure the output as follows:
+
+### Header Section
+- **Title:** `# PR #{number}: {title}`
+- **Metadata line 1:** Author, State, Draft status
+- **Metadata line 2:** Labels (comma-separated), Requested reviewers (comma-separated)
+- **Metadata line 3:** Last updated timestamp, Diff statistics (files/additions/deletions)
+- **Metadata line 4:** Direct GitHub URL link
+
+### Review Analysis Section
+- Overall priority score (0-10 scale)
+- Overall recommendation (text summary)
+- Provider and model information
+- Generation timestamp
+
+### Findings Section
+- Each finding from a subagent as a numbered section
+- Include: agent name, focus area as section title
+- Verdict (LOW/MEDIUM/HIGH), Score, Confidence in bold
+- Summary subsection with detailed analysis
+- Recommendations subsection as bullet list (if any)
+- Tags at the end (if any)
+- Horizontal rule separator between findings
+
+### Formatting Guidelines
+- Use bold (`**text**`) for field labels
+- Use horizontal rules (`---`) to separate major sections
+- Use proper heading hierarchy: `#` for title, `##` for major sections, `###` for findings, `####` for subsections
+- Keep metadata compact (multiple fields per line with `|` separator)
+- Make labels, reviewers, and tags comma-separated lists
+- Format timestamps as YYYY-MM-DD HH:MM:SS UTC
+- Show diff stats as: `N files, +additions/-deletions lines`
+
 ## Tips
 
 - Focus on the diff, not the whole codebase

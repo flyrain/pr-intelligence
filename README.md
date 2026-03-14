@@ -201,7 +201,8 @@ PORT=9090 ./run.sh serve
 - `GET /reviews/pr/{pr_number}/job` - Get job status by PR number
 - `GET /reviews/jobs/{job_id}` - Get job status by job ID
 - `GET /reviews/pr/{pr_number}/latest` - Latest review result (JSON)
-- `GET /reviews/pr/{pr_number}/latest.md` - Latest review result (markdown)
+- `GET /reviews/pr/{pr_number}/latest.md` - Latest review result (markdown with PR metadata, review analysis, and findings)
+- `GET /reviews/pr/{pr_number}/latest.html` - Latest review result (rendered HTML page)
 - `GET /reviews/pr/top` - Top-rated reviews
 
 ### Queues
