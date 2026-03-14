@@ -157,6 +157,43 @@ APPROVE / REQUEST CHANGES / COMMENT — <one-sentence summary>
 - Skip speculative or theoretical concerns — only flag things grounded in the actual diff
 - Prioritize maintainability over exhaustive security analysis of hypothetical scenarios
 
+## Automated Review Output Format
+
+When conducting automated PR reviews (via the review queue system), return findings as JSON with these fields:
+
+### Verdict Levels
+- **low**: Minor issues, safe to merge with optional improvements
+- **medium**: Notable concerns that should be addressed, but not blocking
+- **high**: Critical issues that must be fixed before merge
+
+### Scoring Guidance
+- **score** (0.0-1.0): Overall risk/priority level for this aspect
+  - 0.0-0.3: Low concern
+  - 0.3-0.7: Medium concern
+  - 0.7-1.0: High concern
+- **confidence** (0.0-1.0): How confident you are in this assessment
+  - Use lower confidence when diff context is limited or behavior is ambiguous
+
+### Catalog Suggestions
+Suggest which reporting catalogs this PR belongs in:
+- **needs-review**: Ready for human review, should be prioritized
+- **aging-prs**: Stale PRs that may need a nudge
+- **security-risk**: Auth, permissions, secrets, trust boundaries, security-sensitive changes
+- **release-risk**: Broad changes, risky diffs, regression potential, rollout concerns
+- **interesting-issues**: Not typically applicable for PRs
+- **recently-updated**: Fresh activity that deserves attention
+
+### Output Fields
+- **agent_name**: The review aspect identifier (code-risk, test-impact, docs-quality, security-signal)
+- **focus_area**: The aspect's focus area description
+- **verdict**: low, medium, or high (see above)
+- **score**: 0.0-1.0 numeric risk assessment (see above)
+- **summary**: 1-3 short sentences, plain English, no jargon padding
+- **recommendations**: Array of short actionable items (e.g. "add null guard in Foo.java:42")
+- **tags**: Optional short tags for categorization
+- **suggested_catalogs**: Array of catalog names (see above)
+- **confidence**: 0.0-1.0 confidence level (see above)
+
 ## Automated Review Report Format
 
 When generating markdown reports for automated PR reviews (via the review queue system), structure the output as follows:

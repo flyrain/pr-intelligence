@@ -239,20 +239,9 @@ Code diff (patch):
 
 Review the PR below. Use tools to read source files when the diff isn't enough.
 
-Write like a teammate leaving PR comments — short, casual, specific. No filler.
+Follow the "Review Style" and "Automated Review Output Format" guidance from the skill above.
 
-Respond with ONLY valid JSON:
-{{
-  "agent_name": "{agent_name}",
-  "focus_area": "{focus_area}",
-  "verdict": "low|medium|high",
-  "score": 0.0-1.0,
-  "summary": "1-2 short sentences, plain English, no jargon padding",
-  "recommendations": ["short actionable item, e.g. 'add null guard in Foo.java:42'"],
-  "tags": ["optional-short-tag"],
-  "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
-  "confidence": 0.0-1.0
-}}
+Respond with ONLY valid JSON for agent_name="{agent_name}" and focus_area="{focus_area}".
 
 Pull request metadata:
 - number: {pr.number}
@@ -290,22 +279,12 @@ Code diff (patch):
 
 Review the PR below according to the review aspects defined in the skill above. Use tools to read source files when the diff isn't enough.
 
-Write like a teammate leaving PR comments — short, casual, specific. No filler.
+Follow the "Review Style" and "Automated Review Output Format" guidance from the skill above.
 
-Respond with ONLY valid JSON in this shape:
+Respond with ONLY valid JSON:
 {{
   "findings": [
-    {{
-      "agent_name": "aspect identifier from skill",
-      "focus_area": "aspect focus area from skill",
-      "verdict": "low|medium|high",
-      "score": 0.0-1.0,
-      "summary": "1-2 short sentences, plain English, no jargon padding",
-      "recommendations": ["short actionable item, e.g. 'add null guard in Foo.java:42'"],
-      "tags": ["optional-short-tag"],
-      "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
-      "confidence": 0.0-1.0
-    }}
+    {{ <finding object per skill format> }}
   ]
 }}
 
@@ -639,18 +618,9 @@ Your focus area is: {focus_area}
 Analyze the pull request below with concrete, code-specific findings.
 You may inspect repository files for extra context if needed.
 
-Return ONLY valid JSON:
-{{
-  "agent_name": "{agent_name}",
-  "focus_area": "{focus_area}",
-  "verdict": "low|medium|high",
-  "score": 0.0-1.0,
-  "summary": "2-3 sentence analysis with specific findings from the code",
-  "recommendations": ["specific actionable item referencing code"],
-  "tags": ["optional-short-tag"],
-  "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
-  "confidence": 0.0-1.0
-}}
+Follow the "Review Style" and "Automated Review Output Format" guidance from the skill above.
+
+Return ONLY valid JSON for agent_name="{agent_name}" and focus_area="{focus_area}".
 
 Pull request metadata:
 - number: {pr.number}
@@ -744,20 +714,12 @@ Code diff (patch):
 
 Analyze the pull request below according to the review aspects defined in the skill above. You may inspect repository files for extra context if needed.
 
-Return ONLY valid JSON in this shape:
+Follow the "Review Style" and "Automated Review Output Format" guidance from the skill above.
+
+Return ONLY valid JSON:
 {{
   "findings": [
-    {{
-      "agent_name": "aspect identifier from skill",
-      "focus_area": "aspect focus area from skill",
-      "verdict": "low|medium|high",
-      "score": 0.0-1.0,
-      "summary": "2-3 sentence analysis with specific findings from the code",
-      "recommendations": ["specific actionable item referencing code"],
-      "tags": ["optional-short-tag"],
-      "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|interesting-issues|recently-updated"],
-      "confidence": 0.0-1.0
-    }}
+    {{ <finding object per skill format> }}
   ]
 }}
 
