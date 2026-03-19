@@ -37,6 +37,8 @@ class Settings:
     codex_timeout_sec: int = 300
     codex_max_turns: int = 15
     analysis_top_slice_limit: int = 10
+    enable_periodic_refresh: bool = True
+    refresh_interval_hours: int = 2
 
 
 def _float_env(name: str, default: float) -> float:
@@ -120,4 +122,6 @@ def load_settings() -> Settings:
         codex_timeout_sec=_int_env("CODEX_TIMEOUT_SEC", 300),
         codex_max_turns=_int_env("CODEX_MAX_TURNS", 15),
         analysis_top_slice_limit=_int_env("ANALYSIS_TOP_SLICE_LIMIT", 10),
+        enable_periodic_refresh=os.getenv("ENABLE_PERIODIC_REFRESH", "true").lower() in ("true", "1", "yes"),
+        refresh_interval_hours=_int_env("REFRESH_INTERVAL_HOURS", 2),
     )

@@ -52,7 +52,15 @@ def build_runtime():
     event_graph = EventGraph(repo, settings=settings)
     daily_graph = DailyReportGraph(repo, llm=llm, settings=settings)
     pr_review_graph = PRReviewGraph(repo, reviewer=reviewer, gh=gh)
-    scheduler = DailyScheduler(daily_graph)
+    scheduler = DailyScheduler(
+        daily_graph,
+        snapshot_ingestor=snapshot_ingestor,
+        repo=repo,
+        review_need_agent=event_graph.review_need,
+        issue_insight_agent=event_graph.issue_insight,
+        enable_periodic_refresh=settings.enable_periodic_refresh,
+        refresh_interval_hours=settings.refresh_interval_hours,
+    )
     app = create_app(
         repo,
         event_graph,
