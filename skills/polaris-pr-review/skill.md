@@ -74,10 +74,6 @@ Analyze PRs across these four dimensions. Each aspect should produce specific, a
 - All catalog operations check `PolarisAuthorizableOperation` before executing
 - `authorizeAndValidate()` called before any data access
 - Privilege escalation: callers cannot grant themselves more than they have
-- Correct privilege scoping: `TABLE_FULL_METADATA` vs `TABLE_READ_DATA` vs `TABLE_WRITE_DATA`
-- `overwrite` paths require full metadata privilege, not just read
-- Missing `null` guards on principal/role lookups
-- **Iceberg spec compliance**: `RegisterTable` follows REST spec, metadata location validated, UUID handling correct, `format-version` respected
 
 ## Review Style
 
@@ -165,4 +161,3 @@ For automated review reports, structure markdown as:
 - Reference `references/auth-patterns.md` for authorization patterns
 - Note Iceberg spec questions for PR author rather than blocking
 - Call out repeated issues once with detail, reference briefly elsewhere
-- Remind to run `./gradlew format compileAll` before merge
