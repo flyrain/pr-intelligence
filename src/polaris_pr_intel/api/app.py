@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from polaris_pr_intel.agents.issue_insight import IssueInsightAgent
 from polaris_pr_intel.agents.review_need import ReviewNeedAgent
@@ -39,6 +40,15 @@ def create_app(
     scheduler: "DailyScheduler | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Polaris PR Intelligence")
+
+    # Mount static files for serving images and assets
+    import os
+    # Go up from api/app.py -> api -> polaris_pr_intel -> src -> project_root
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    docs_path = os.path.join(project_root, "docs")
+    if os.path.exists(docs_path):
+        app.mount("/docs-static", StaticFiles(directory=docs_path), name="docs-static")
+
     review_jobs: dict[str, dict] = {}
     review_jobs_lock = threading.Lock()
     review_job_queue: queue_module.Queue[str] = queue_module.Queue()
@@ -464,16 +474,16 @@ def create_app(
       gap: 12px;
     }}
     .brand-mark {{
-      width: 68px;
-      height: 68px;
+      width: 96px;
+      height: 96px;
       flex: 0 0 auto;
       display: grid;
       place-items: center;
       filter: drop-shadow(0 8px 16px rgba(10, 20, 40, 0.35));
     }}
     .brand-mark svg {{
-      width: 68px;
-      height: 68px;
+      width: 96px;
+      height: 96px;
       display: block;
     }}
     .brand-copy {{
@@ -823,22 +833,7 @@ def create_app(
 	      <div class="hero-top">
           <div class="hero-heading">
             <div class="brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M15 59C18 50 28 44 39 43C48 33 63 28 79 37C73 38 67 42 64 48C73 49 81 54 86 63C80 61 72 62 66 67C56 72 43 71 33 64C26 66 20 65 15 59Z" fill="#101827"/>
-                <path d="M37 44C44 36 58 33 72 38C66 40 60 44 57 49C49 49 42 47 37 44Z" fill="#FFFFFF"/>
-                <path d="M33 64C39 69 48 71 57 68C51 61 44 57 36 57C35.1 59.2 34.1 61.5 33 64Z" fill="#FFFFFF"/>
-                <path d="M47 34C49 25 57 18 66 16C63 24 60 30 54 35" fill="#101827"/>
-                <path d="M80 62C86 61 91 63 94 68C88 68 83 71 80 76" fill="#101827"/>
-                <ellipse cx="61" cy="47" rx="4.2" ry="4.8" fill="#FFFFFF"/>
-                <ellipse cx="61.8" cy="47.4" rx="1.5" ry="1.9" fill="#101827"/>
-                <ellipse cx="52.5" cy="53.5" rx="6.8" ry="5.2" fill="#FFFFFF"/>
-                <path d="M49.5 57.2C52.3 60.1 56.5 60.2 59.3 57.2" stroke="#101827" stroke-width="2.6" stroke-linecap="round"/>
-                <circle cx="49" cy="55.5" r="1.9" fill="#F9A8D4"/>
-                <circle cx="58.8" cy="55.5" r="1.9" fill="#F9A8D4"/>
-                <path d="M21 69C18.2 70.6 16 73.4 14.2 77" stroke="#7DD3FC" stroke-width="3.8" stroke-linecap="round"/>
-                <circle cx="31" cy="49" r="2.4" fill="#FFFFFF"/>
-                <circle cx="57.4" cy="45.8" r="0.9" fill="#FFFFFF"/>
-              </svg>
+              <img src="/docs-static/orca-transparent.png" alt="Orca Logo" style="width: 96px; height: 96px; display: block; object-fit: contain;">
             </div>
             <div class="brand-copy">
 	          <h1>PR Intelligence</h1>
