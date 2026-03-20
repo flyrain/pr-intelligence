@@ -24,6 +24,7 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 - **Cloud providers**: Anthropic, OpenAI, Gemini
 - **Heuristic fallback**: deterministic output when LLM unavailable
 - **Custom skills**: separate prompts for deep PR reviews vs. batch report analysis
+- **Multi-step self-review**: optional 3-step critique-and-revise process for higher quality reviews (see below)
 
 ### 📊 Automated Reporting
 - **Daily reports** with attention-focused summaries
@@ -158,6 +159,9 @@ PORT=9090 ./run.sh serve
 - `REVIEW_JOB_WORKERS` (default: `1`; number of parallel async PR review workers. Increase for higher concurrency.)
 - `REVIEW_JOB_TIMEOUT_SEC` (default: `1200`; max time in seconds for a review job before marking as failed)
 - `ANALYSIS_TOP_SLICE_LIMIT` (default: `10`; number of top PRs sent to the report-analysis LLM per analysis run)
+- `ENABLE_SELF_REVIEW` (default: `false`; enable 3-step self-review process for PR reviews. See [Self-Review Feature](#self-review-feature-experimental) below.)
+- `ENABLE_PERIODIC_REFRESH` (default: `true`; enable automatic periodic refresh scheduler)
+- `REFRESH_INTERVAL_HOURS` (default: `2`; hours between automatic refreshes)
 
 ### LLM provider selection
 - `LLM_PROVIDER` (default: `claude_code_local`)
@@ -236,6 +240,94 @@ This separation allows:
 - Different prompting strategies for deep vs. broad analysis
 - Independent skill evolution for different use cases
 - Better cost/performance trade-offs per task type
+
+## Self-Review Feature (Experimental)
+
+The service includes an optional **multi-step self-review** capability that improves PR review quality through LLM critique and revision.
+
+### How It Works
+
+When `ENABLE_SELF_REVIEW=true`, PR reviews use a 3-step process instead of single-pass generation:
+
+1. **Generate** - LLM produces initial review findings (same as normal)
+2. **Critique** - LLM examines its own findings against quality criteria:
+   - **Specificity**: Are recommendations actionable with file:line references?
+   - **Coverage**: Were all critical checks from skill.md addressed?
+   - **Consistency**: Do verdicts align with scores? Any contradictions?
+   - **Clarity**: Is language clear and concise without hedging?
+3. **Revise** - LLM regenerates findings addressing the critique issues
+
+Each step is a separate LLM invocation. If critique or revision fails, the system gracefully falls back to the initial findings.
+
+### When to Use
+
+**Enable self-review when:**
+- Review quality is more important than speed
+- You're doing targeted reviews on critical PRs
+- You have budget for 3x LLM calls per review
+
+**Keep disabled (default) when:**
+- You need fast turnaround times
+- You're doing bulk/batch reviews
+- Cost optimization is a priority
+- Initial reviews are already sufficient
+
+### Configuration
+
+```bash
+# Enable self-review globally
+export ENABLE_SELF_REVIEW=true
+./run.sh serve
+
+# Or for a single session
+ENABLE_SELF_REVIEW=true ./run.sh serve
+```
+
+### Performance Impact
+
+- **Latency**: ~3x baseline (15-30s → 45-90s per review)
+- **Cost**: ~3x token usage (3 separate LLM calls)
+- **Quality**: Significantly improved specificity, coverage, and consistency
+
+### Monitoring
+
+When self-review is enabled, logs show the 3-step process:
+```
+[INFO] Step 1/3: Generating initial review for PR #123
+[INFO] Step 2/3: Critiquing initial findings for PR #123
+[INFO] Step 3/3: Revising findings based on critique for PR #123
+[INFO] Self-review complete for PR #123: 4 findings revised
+```
+
+If any step fails, you'll see fallback warnings:
+```
+[WARNING] Step 2 (critique) failed, using initial findings: <error>
+```
+
+### A/B Testing
+
+To compare quality with/without self-review:
+
+```bash
+# Baseline review
+export ENABLE_SELF_REVIEW=false
+./run.sh review 123
+curl http://127.0.0.1:8080/reviews/pr/123/latest.md > baseline.md
+
+# Self-reviewed
+export ENABLE_SELF_REVIEW=true
+./run.sh review 123
+curl http://127.0.0.1:8080/reviews/pr/123/latest.md > self-reviewed.md
+
+# Compare
+diff baseline.md self-reviewed.md
+```
+
+Look for improvements in:
+- More specific file:line references in recommendations
+- Better coverage of all critical checks
+- Aligned verdicts and scores
+- Clearer, more concise language
 
 ## Provider Notes
 
@@ -476,6 +568,24 @@ kill <pid>
 - Check `claude`, `codex`, or other CLI tools are in PATH for local providers
 - Review logs for detailed error messages
 - Fall back to `heuristic` provider for testing: `export LLM_PROVIDER=heuristic`
+
+**Self-review taking too long**
+```
+Step 2/3: Critiquing initial findings for PR #123
+(hangs for minutes)
+```
+→ Self-review makes 3 LLM calls instead of 1. Expected latency is ~3x baseline.
+→ Increase timeout if needed: `export REVIEW_JOB_TIMEOUT_SEC=2400`
+→ Or disable self-review: `export ENABLE_SELF_REVIEW=false`
+
+**Self-review falling back to initial findings**
+```
+[WARNING] Step 2 (critique) failed, using initial findings
+```
+→ This is expected behavior when critique/revision fails (LLM error, timeout, parse failure)
+→ The review still completes successfully with initial findings
+→ Check logs for specific error details
+→ If persistent, disable self-review or adjust timeout
 
 **Webhook signature verification fails**
 → Ensure `GITHUB_WEBHOOK_SECRET` matches your GitHub webhook configuration
