@@ -1,4 +1,4 @@
-# PR Intelligence (LangGraph + GitHub API)
+# PR Intelligence
 
 An intelligent GitHub repository monitoring service that leverages LangGraph and LLM agents to automate PR review prioritization, issue tracking, and daily reporting. Originally built for Apache Polaris, but configurable for any GitHub repository.
 

@@ -6,8 +6,9 @@ import json
 import os
 import queue as queue_module
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -23,6 +24,8 @@ from polaris_pr_intel.ingest import SnapshotIngestor
 from polaris_pr_intel.models import AnalysisItem, GitHubEvent, QueueItem
 from polaris_pr_intel.store.base import Repository
 
+if TYPE_CHECKING:
+    from polaris_pr_intel.scheduler.daily import DailyScheduler
 
 
 def create_app(
@@ -33,6 +36,7 @@ def create_app(
     snapshot_ingestor: SnapshotIngestor,
     settings: Settings | None = None,
     webhook_secret: str = "",
+    scheduler: "DailyScheduler | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Polaris PR Intelligence")
     review_jobs: dict[str, dict] = {}
@@ -196,6 +200,27 @@ def create_app(
             "last_sync_at": repo.last_sync_at.isoformat() if repo.last_sync_at else None,
         }
 
+    def _refresh_status(now: datetime | None = None) -> dict:
+        now_utc = now or datetime.now(timezone.utc)
+        next_refresh_at: datetime | None = None
+        periodic_refresh_enabled = bool(app_settings.enable_periodic_refresh)
+        if scheduler is not None:
+            refresh_job = scheduler.scheduler.get_job("periodic-refresh")
+            if refresh_job is not None:
+                next_refresh_at = refresh_job.next_run_time
+        if next_refresh_at is None and periodic_refresh_enabled and repo.last_sync_at:
+            next_refresh_at = repo.last_sync_at + timedelta(hours=app_settings.refresh_interval_hours)
+        seconds_until_next_refresh: int | None = None
+        if next_refresh_at is not None:
+            seconds_until_next_refresh = max(0, int((next_refresh_at - now_utc).total_seconds()))
+        return {
+            "enabled": periodic_refresh_enabled,
+            "last_sync_at": repo.last_sync_at.isoformat() if repo.last_sync_at else None,
+            "next_refresh_at": next_refresh_at.isoformat() if next_refresh_at else None,
+            "seconds_until_next_refresh": seconds_until_next_refresh,
+            "refresh_interval_hours": app_settings.refresh_interval_hours,
+        }
+
     @app.get("/")
     def index() -> dict:
         return {
@@ -225,6 +250,7 @@ def create_app(
     @app.get("/ui", response_class=HTMLResponse)
     def dashboard() -> str:
         stats = _stats()
+        refresh_status = _refresh_status()
         local_now = datetime.now().astimezone()
         local_today = local_now.date()
         local_tz = local_now.tzinfo
@@ -245,6 +271,24 @@ def create_app(
             dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
             local_dt = dt.astimezone(local_tz) if local_tz else dt
             return local_dt.strftime("%H:%M")
+
+        def _fmt_local_timestamp(value: str | None) -> str:
+            if not value:
+                return "N/A"
+            dt = datetime.fromisoformat(value)
+            local_dt = dt.astimezone(local_tz) if local_tz else dt
+            return local_dt.strftime("%Y-%m-%d %H:%M")
+
+        def _fmt_duration(seconds: int | None) -> str:
+            if seconds is None:
+                return "N/A"
+            total_minutes = max(0, int(seconds)) // 60
+            hours, minutes = divmod(total_minutes, 60)
+            parts: list[str] = []
+            if hours:
+                parts.append(f"{hours}h")
+            parts.append(f"{minutes}m")
+            return " ".join(parts)
 
         new_updated_prs = sorted(
             [pr for pr in repo.prs.values() if pr.state == "open" and _is_updated_today_local(pr.updated_at)],
@@ -407,36 +451,96 @@ def create_app(
       padding: 20px;
       box-shadow: 0 14px 34px rgba(0,0,0,0.35);
     }}
+    .hero-top {{
+      display: grid;
+      grid-template-columns: minmax(320px, 360px) minmax(40px, 1fr) fit-content(320px) fit-content(240px) 140px;
+      gap: 14px;
+      align-items: center;
+    }}
+    .hero-heading {{
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }}
+    .brand-mark {{
+      width: 68px;
+      height: 68px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      filter: drop-shadow(0 8px 16px rgba(10, 20, 40, 0.35));
+    }}
+    .brand-mark svg {{
+      width: 68px;
+      height: 68px;
+      display: block;
+    }}
+    .brand-copy {{
+      min-width: 0;
+    }}
     h1,h2,h3 {{ font-family: "IBM Plex Serif", Georgia, serif; margin: 0 0 12px 0; }}
-    h1 {{ font-size: 34px; }}
+    h1 {{ font-size: 24px; margin-bottom: 2px; line-height: 1.02; }}
     h2 {{ font-size: 24px; margin-top: 18px; }}
-    .muted {{ color: var(--muted); margin: 0 0 14px 0; }}
-    .actions {{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }}
+    .muted {{ color: var(--muted); margin: 0; }}
+    .hero-side {{
+      min-width: 0;
+      display: contents;
+    }}
     .btn {{
-      border: 1px solid var(--line);
-      background: var(--card);
-      color: var(--ink);
-      padding: 8px 12px;
-      border-radius: 10px;
-      text-decoration: none;
-      font-weight: 600;
-      cursor: pointer;
-    }}
-    .btn.primary {{ background: var(--accent); color: white; border-color: var(--accent); }}
-    .btn.sync-btn {{
-      background: linear-gradient(135deg, #0d9488 0%, #059669 100%);
+      border: 1px solid rgba(45, 212, 191, 0.22);
+      background: linear-gradient(135deg, #1f948f 0%, #177c80 100%);
       color: #f8fffe;
-      border-color: #0d9488;
+      padding: 10px 12px;
+      border-radius: 12px;
+      text-decoration: none;
       font-weight: 700;
-      box-shadow: 0 6px 16px rgba(15, 118, 110, 0.28);
+      cursor: pointer;
+      text-align: center;
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 16px rgba(8, 54, 61, 0.24);
+      transition: transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
+      white-space: nowrap;
+      width: 140px;
     }}
-    .btn.sync-btn:hover {{
+    .btn:hover {{
       filter: brightness(1.05);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(8, 54, 61, 0.28);
+    }}
+    .btn.primary {{
+      background: linear-gradient(135deg, #238f9e 0%, #1d7d91 100%);
+      border-color: rgba(125, 239, 233, 0.2);
+    }}
+    .btn.sync-btn {{
+      background: linear-gradient(135deg, #1b877f 0%, #176f75 100%);
+      border-color: rgba(79, 214, 197, 0.18);
+    }}
+    .btn.sync-btn.loading {{
+      opacity: 0.82;
+      cursor: default;
+      position: relative;
+    }}
+    .btn.sync-btn.loading::after {{
+      content: "";
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #ffffff;
+      margin-left: 8px;
+      animation: sync-spin 0.8s linear infinite;
     }}
     .btn.sync-btn:disabled {{
       opacity: 0.75;
       cursor: default;
       box-shadow: none;
+    }}
+    @keyframes sync-spin {{
+      to {{ transform: rotate(360deg); }}
     }}
     .grid {{
       display: grid;
@@ -573,7 +677,65 @@ def create_app(
     .queue-section[open] > summary {{
       margin-bottom: 10px;
     }}
+    .status-panel {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 0;
+      min-width: 0;
+    }}
+    .status-item {{
+      padding: 14px 16px 14px 18px;
+      border-radius: 18px;
+      background:
+        radial-gradient(circle at top right, rgba(45, 212, 191, 0.08) 0%, transparent 30%),
+        linear-gradient(180deg, rgba(14, 26, 44, 0.96) 0%, rgba(11, 21, 37, 0.98) 100%);
+      border: 1px solid rgba(125, 211, 252, 0.14);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 20px rgba(2, 8, 18, 0.24);
+      position: relative;
+      overflow: hidden;
+      white-space: nowrap;
+    }}
+    .status-item::before {{
+      content: "";
+      position: absolute;
+      inset: 10px auto 10px 0;
+      width: 4px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--accent) 0%, #7dd3fc 100%);
+    }}
+    .status-item .k {{
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #9fb7d8;
+      position: relative;
+      margin: 0;
+      display: inline;
+    }}
+    .status-item .v {{
+      font-size: 15px;
+      font-weight: 500;
+      color: #f8fbff;
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+      position: relative;
+      line-height: 1.15;
+      white-space: nowrap;
+      display: inline;
+      margin-left: 8px;
+    }}
+    .hero-spacer {{
+      min-width: 0;
+    }}
+    .brand-copy h1 {{
+      white-space: nowrap;
+    }}
+    .brand-copy .muted {{
+      white-space: nowrap;
+    }}
     @media (max-width: 960px) {{
+      .hero-top {{ grid-template-columns: 1fr; }}
+      .status-panel {{ grid-template-columns: 1fr; }}
       .layout {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 28px; }}
     }}
@@ -582,12 +744,12 @@ def create_app(
     async function refreshAll(btn) {{
       const original = btn.textContent;
       btn.disabled = true;
-      btn.textContent = "Refreshing...";
+      btn.classList.add("loading");
       try {{
         const res = await fetch("/refresh?per_page=100&max_pages=20", {{ method: "POST" }});
         const data = await res.json();
         if (data.ok) {{
-          btn.textContent = "Refreshed";
+          btn.textContent = "Done";
           setTimeout(() => window.location.reload(), 600);
         }} else {{
           btn.textContent = "Failed";
@@ -599,6 +761,7 @@ def create_app(
       }} finally {{
         setTimeout(() => {{
           btn.disabled = false;
+          btn.classList.remove("loading");
           if (btn.textContent !== "Failed") btn.textContent = original;
         }}, 2000);
       }}
@@ -627,21 +790,72 @@ def create_app(
         }}, 2000);
       }}
     }}
+
+    function formatDuration(totalSeconds) {{
+      if (totalSeconds == null) return "N/A";
+      const totalMinutes = Math.max(0, Math.floor(Number(totalSeconds) / 60));
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes - hours * 60;
+      const parts = [];
+      if (hours) parts.push(`${{hours}}h`);
+      parts.push(`${{minutes}}m`);
+      return parts.join(" ");
+    }}
+
+    function startRefreshCountdown() {{
+      const countdownEl = document.getElementById("next-refresh-countdown");
+      if (!countdownEl) return;
+      let remaining = Number(countdownEl.dataset.remainingSeconds || "");
+      if (!Number.isFinite(remaining)) return;
+      countdownEl.textContent = formatDuration(remaining);
+      window.setInterval(() => {{
+        remaining = Math.max(0, remaining - 1);
+        countdownEl.textContent = formatDuration(remaining);
+      }}, 1000);
+    }}
+
+    window.addEventListener("DOMContentLoaded", startRefreshCountdown);
   </script>
 </head>
-<body>
+	<body>
 	  <div class="wrap">
 	    <section class="hero">
-	      <h1>Polaris PR Intelligence</h1>
-	      <p class="muted">Daily PR/issue triage dashboard for apache/polaris.</p>
-	      <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
-	      <div class="actions">
-	        <a class="btn primary" href="/docs">Open API Docs</a>
-	        <button class="btn sync-btn" type="button" onclick="refreshAll(this)">Refresh All Data</button>
-        <a class="btn" href="/reports/daily/latest.md">Latest Report Markdown</a>
-        <a class="btn" href="/queues/needs-review">Needs Review JSON</a>
-        <a class="btn" href="/queues/interesting-issues">Interesting Issues JSON</a>
-      </div>
+	      <div class="hero-top">
+          <div class="hero-heading">
+            <div class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M15 59C18 50 28 44 39 43C48 33 63 28 79 37C73 38 67 42 64 48C73 49 81 54 86 63C80 61 72 62 66 67C56 72 43 71 33 64C26 66 20 65 15 59Z" fill="#101827"/>
+                <path d="M37 44C44 36 58 33 72 38C66 40 60 44 57 49C49 49 42 47 37 44Z" fill="#FFFFFF"/>
+                <path d="M33 64C39 69 48 71 57 68C51 61 44 57 36 57C35.1 59.2 34.1 61.5 33 64Z" fill="#FFFFFF"/>
+                <path d="M47 34C49 25 57 18 66 16C63 24 60 30 54 35" fill="#101827"/>
+                <path d="M80 62C86 61 91 63 94 68C88 68 83 71 80 76" fill="#101827"/>
+                <ellipse cx="61" cy="47" rx="4.2" ry="4.8" fill="#FFFFFF"/>
+                <ellipse cx="61.8" cy="47.4" rx="1.5" ry="1.9" fill="#101827"/>
+                <ellipse cx="52.5" cy="53.5" rx="6.8" ry="5.2" fill="#FFFFFF"/>
+                <path d="M49.5 57.2C52.3 60.1 56.5 60.2 59.3 57.2" stroke="#101827" stroke-width="2.6" stroke-linecap="round"/>
+                <circle cx="49" cy="55.5" r="1.9" fill="#F9A8D4"/>
+                <circle cx="58.8" cy="55.5" r="1.9" fill="#F9A8D4"/>
+                <path d="M21 69C18.2 70.6 16 73.4 14.2 77" stroke="#7DD3FC" stroke-width="3.8" stroke-linecap="round"/>
+                <circle cx="31" cy="49" r="2.4" fill="#FFFFFF"/>
+                <circle cx="57.4" cy="45.8" r="0.9" fill="#FFFFFF"/>
+              </svg>
+            </div>
+            <div class="brand-copy">
+	          <h1>PR Intelligence</h1>
+	          <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
+            </div>
+          </div>
+          <div class="hero-spacer"></div>
+          <article class="status-item">
+            <div class="k">Last Update</div>
+            <div class="v">{escape(_fmt_local_timestamp(refresh_status["last_sync_at"]))}</div>
+          </article>
+          <article class="status-item">
+            <div class="k">Next Update In:</div>
+            <div class="v" id="next-refresh-countdown" data-remaining-seconds="{'' if refresh_status['seconds_until_next_refresh'] is None else refresh_status['seconds_until_next_refresh']}">{escape(_fmt_duration(refresh_status["seconds_until_next_refresh"]))}</div>
+          </article>
+          <button class="btn sync-btn" type="button" onclick="refreshAll(this)">Sync</button>
+        </div>
     </section>
 
     <section class="grid">

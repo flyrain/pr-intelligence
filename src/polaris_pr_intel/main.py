@@ -69,6 +69,7 @@ def build_runtime():
         snapshot_ingestor=snapshot_ingestor,
         settings=settings,
         webhook_secret=settings.github_webhook_secret,
+        scheduler=scheduler,
     )
     app.add_event_handler("startup", scheduler.start)
     app.add_event_handler("shutdown", scheduler.stop)

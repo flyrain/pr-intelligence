@@ -156,7 +156,6 @@ For automated review reports, structure markdown as:
 
 ## Tips
 
-- Focus on the diff, not the whole codebase
 - For authorization bugs, trace from REST handler through service layer
 - Reference `references/auth-patterns.md` for authorization patterns
 - Note Iceberg spec questions for PR author rather than blocking
