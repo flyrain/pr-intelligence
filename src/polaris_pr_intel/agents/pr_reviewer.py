@@ -7,11 +7,14 @@ from polaris_pr_intel.models import PRReviewReport, PRSubagentFinding, PullReque
 class PRSubagentReviewer:
     """Single-agent PR reviewer that analyzes all aspects in one comprehensive pass."""
 
-    def __init__(self, llm: LLMAdapter) -> None:
+    def __init__(self, llm: LLMAdapter, enable_self_review: bool = False) -> None:
         self.llm = llm
+        self.enable_self_review = enable_self_review
 
     def run(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
         """Run comprehensive PR review covering all aspects (code risk, security, tests, docs)."""
+        if self.enable_self_review:
+            return self.llm.analyze_pr_with_self_review(pr)
         return self.llm.analyze_pr_comprehensive(pr)
 
     def aggregate(self, pr: PullRequestSnapshot, findings: list[PRSubagentFinding]) -> PRReviewReport:

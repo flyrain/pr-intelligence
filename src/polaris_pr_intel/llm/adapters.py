@@ -116,6 +116,10 @@ class HeuristicLLMAdapter:
             for agent_name, focus_area in self.review_aspects
         ]
 
+    def analyze_pr_with_self_review(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
+        """Three-step self-review: generate → critique → revise. Base implementation just calls comprehensive."""
+        return self.analyze_pr_comprehensive(pr)
+
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
         return self.analyze_pr("catalog-router", "catalog routing and prioritization", pr)
 
@@ -463,6 +467,171 @@ PR description:
                 ) from exc
             # Fallback to heuristic multi-finding
             return super().analyze_pr_comprehensive(pr)
+
+    def analyze_pr_with_self_review(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
+        """Three-step self-review: generate → critique → revise."""
+        logger.info("Step 1/3: Generating initial review for PR #%d", pr.number)
+
+        # Step 1: Generate initial review
+        try:
+            initial_findings = self.analyze_pr_comprehensive(pr)
+        except Exception as exc:
+            logger.warning("Step 1 failed, falling back to heuristic: %s", exc)
+            return super().analyze_pr_comprehensive(pr)
+
+        # Step 2: Critique the initial review
+        logger.info("Step 2/3: Critiquing initial findings for PR #%d", pr.number)
+        critique_prompt = self._build_critique_prompt(pr, initial_findings)
+        try:
+            critique_payload = self._run_raw_prompt(critique_prompt)
+            if not isinstance(critique_payload, dict):
+                logger.warning("Critique returned non-dict, skipping revision")
+                return initial_findings
+
+            issues = critique_payload.get("issues", [])
+            if not issues:
+                logger.info("No critique issues found, using initial findings")
+                return initial_findings
+
+        except Exception as exc:
+            logger.warning("Step 2 (critique) failed, using initial findings: %s", exc)
+            return initial_findings
+
+        # Step 3: Revise based on critique
+        logger.info("Step 3/3: Revising findings based on critique for PR #%d", pr.number)
+        revision_prompt = self._build_revision_prompt(pr, initial_findings, critique_payload)
+        try:
+            revised_payload = self._run_raw_prompt(revision_prompt)
+            if not isinstance(revised_payload, dict):
+                logger.warning("Revision returned non-dict, using initial findings")
+                return initial_findings
+
+            revised_findings_data = revised_payload.get("findings")
+            if not isinstance(revised_findings_data, list):
+                logger.warning("Revision missing findings array, using initial findings")
+                return initial_findings
+
+            revised_findings: list[PRSubagentFinding] = []
+            for item in revised_findings_data:
+                if not isinstance(item, dict):
+                    continue
+                finding = PRSubagentFinding.model_validate(item)
+                finding.score = _clamp(finding.score, 0.0, 1.0)
+                finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+                revised_findings.append(finding)
+
+            if not revised_findings:
+                logger.warning("No valid revised findings, using initial findings")
+                return initial_findings
+
+            logger.info("Self-review complete for PR #%d: %d findings revised", pr.number, len(revised_findings))
+            return revised_findings
+
+        except Exception as exc:
+            logger.warning("Step 3 (revision) failed, using initial findings: %s", exc)
+            return initial_findings
+
+    def _build_critique_prompt(self, pr: PullRequestSnapshot, findings: list[PRSubagentFinding]) -> str:
+        """Build prompt for critiquing initial review findings."""
+        findings_json = json.dumps([f.model_dump() for f in findings], indent=2)
+
+        return f"""You are a quality reviewer examining a PR review that was just generated.
+
+Review the findings below and identify specific quality issues:
+
+**Specificity Check:**
+- Missing file:line references in recommendations?
+- Vague language like "consider improving" instead of actionable steps?
+
+**Coverage Check:**
+- Critical checks from skill.md that were missed?
+- Obvious patterns not addressed (repeated logic, error handling gaps)?
+
+**Consistency Check:**
+- Verdict (low/medium/high) mismatched with score (0.0-1.0)?
+- Contradictions between findings?
+
+**Clarity Check:**
+- Unnecessary hedging or filler words?
+- Overly long summaries (>2 sentences)?
+
+Original PR context:
+- number: {pr.number}
+- title: {pr.title}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+
+Review findings to critique:
+{findings_json}
+
+Respond with ONLY valid JSON:
+{{
+  "issues": [
+    {{
+      "aspect": "code-risk",
+      "problem": "Recommendation too vague - 'improve error handling'",
+      "fix": "Specify file:line and exact change needed"
+    }}
+  ],
+  "strengths": ["Good coverage of auth patterns", "Clear file references in test-impact"]
+}}"""
+
+    def _build_revision_prompt(self, pr: PullRequestSnapshot, original_findings: list[PRSubagentFinding], critique: dict) -> str:
+        """Build prompt for revising findings based on critique."""
+        review_skill_prompt = self._load_skill_prompt(self.review_skill_file)
+        original_json = json.dumps([f.model_dump() for f in original_findings], indent=2)
+        critique_json = json.dumps(critique, indent=2)
+
+        diff_section = ""
+        if pr.diff_text:
+            truncated_diff = pr.diff_text[:80_000]
+            if len(pr.diff_text) > 80_000:
+                truncated_diff += "\n... (diff truncated)"
+            diff_section = f"""
+
+Code diff (patch):
+```
+{truncated_diff}
+```
+"""
+
+        return f"""{review_skill_prompt + chr(10) + chr(10) if review_skill_prompt else ""}You previously generated a PR review. A quality check identified issues. Now revise your findings.
+
+Original PR context:
+- number: {pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+PR description:
+{pr.body[:4000]}
+{diff_section}
+
+Your original findings:
+{original_json}
+
+Quality issues identified:
+{critique_json}
+
+Regenerate the review addressing all issues listed in the critique. Keep strengths, fix problems.
+
+Follow the "Review Style" and "Automated Review Output Format" guidance from the skill above.
+
+Respond with ONLY valid JSON:
+{{
+  "findings": [
+    {{ <revised finding object per skill format> }}
+  ]
+}}"""
+
 
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_catalog_prompt(pr)
@@ -863,6 +1032,171 @@ PR description:
         except Exception as exc:
             # Fallback to heuristic multi-finding
             return super().analyze_pr_comprehensive(pr)
+
+    def analyze_pr_with_self_review(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
+        """Three-step self-review: generate → critique → revise."""
+        logger.info("Step 1/3: Generating initial review for PR #%d", pr.number)
+
+        # Step 1: Generate initial review
+        try:
+            initial_findings = self.analyze_pr_comprehensive(pr)
+        except Exception as exc:
+            logger.warning("Step 1 failed, falling back to heuristic: %s", exc)
+            return super().analyze_pr_comprehensive(pr)
+
+        # Step 2: Critique the initial review
+        logger.info("Step 2/3: Critiquing initial findings for PR #%d", pr.number)
+        critique_prompt = self._build_critique_prompt(pr, initial_findings)
+        try:
+            critique_payload = self._run_raw_prompt(critique_prompt)
+            if not isinstance(critique_payload, dict):
+                logger.warning("Critique returned non-dict, skipping revision")
+                return initial_findings
+
+            issues = critique_payload.get("issues", [])
+            if not issues:
+                logger.info("No critique issues found, using initial findings")
+                return initial_findings
+
+        except Exception as exc:
+            logger.warning("Step 2 (critique) failed, using initial findings: %s", exc)
+            return initial_findings
+
+        # Step 3: Revise based on critique
+        logger.info("Step 3/3: Revising findings based on critique for PR #%d", pr.number)
+        revision_prompt = self._build_revision_prompt(pr, initial_findings, critique_payload)
+        try:
+            revised_payload = self._run_raw_prompt(revision_prompt)
+            if not isinstance(revised_payload, dict):
+                logger.warning("Revision returned non-dict, using initial findings")
+                return initial_findings
+
+            revised_findings_data = revised_payload.get("findings")
+            if not isinstance(revised_findings_data, list):
+                logger.warning("Revision missing findings array, using initial findings")
+                return initial_findings
+
+            revised_findings: list[PRSubagentFinding] = []
+            for item in revised_findings_data:
+                if not isinstance(item, dict):
+                    continue
+                finding = PRSubagentFinding.model_validate(item)
+                finding.score = _clamp(finding.score, 0.0, 1.0)
+                finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+                revised_findings.append(finding)
+
+            if not revised_findings:
+                logger.warning("No valid revised findings, using initial findings")
+                return initial_findings
+
+            logger.info("Self-review complete for PR #%d: %d findings revised", pr.number, len(revised_findings))
+            return revised_findings
+
+        except Exception as exc:
+            logger.warning("Step 3 (revision) failed, using initial findings: %s", exc)
+            return initial_findings
+
+    def _build_critique_prompt(self, pr: PullRequestSnapshot, findings: list[PRSubagentFinding]) -> str:
+        """Build prompt for critiquing initial review findings."""
+        findings_json = json.dumps([f.model_dump() for f in findings], indent=2)
+
+        return f"""You are a quality reviewer examining a PR review that was just generated.
+
+Review the findings below and identify specific quality issues:
+
+**Specificity Check:**
+- Missing file:line references in recommendations?
+- Vague language like "consider improving" instead of actionable steps?
+
+**Coverage Check:**
+- Critical checks from skill.md that were missed?
+- Obvious patterns not addressed (repeated logic, error handling gaps)?
+
+**Consistency Check:**
+- Verdict (low/medium/high) mismatched with score (0.0-1.0)?
+- Contradictions between findings?
+
+**Clarity Check:**
+- Unnecessary hedging or filler words?
+- Overly long summaries (>2 sentences)?
+
+Original PR context:
+- number: {pr.number}
+- title: {pr.title}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+
+Review findings to critique:
+{findings_json}
+
+Respond with ONLY valid JSON:
+{{
+  "issues": [
+    {{
+      "aspect": "code-risk",
+      "problem": "Recommendation too vague - 'improve error handling'",
+      "fix": "Specify file:line and exact change needed"
+    }}
+  ],
+  "strengths": ["Good coverage of auth patterns", "Clear file references in test-impact"]
+}}"""
+
+    def _build_revision_prompt(self, pr: PullRequestSnapshot, original_findings: list[PRSubagentFinding], critique: dict) -> str:
+        """Build prompt for revising findings based on critique."""
+        review_skill_prompt = self._load_skill_prompt(self.review_skill_file)
+        original_json = json.dumps([f.model_dump() for f in original_findings], indent=2)
+        critique_json = json.dumps(critique, indent=2)
+
+        diff_section = ""
+        if pr.diff_text:
+            truncated_diff = pr.diff_text[:80_000]
+            if len(pr.diff_text) > 80_000:
+                truncated_diff += "\n... (diff truncated)"
+            diff_section = f"""
+
+Code diff (patch):
+```
+{truncated_diff}
+```
+"""
+
+        return f"""{review_skill_prompt + chr(10) + chr(10) if review_skill_prompt else ""}You previously generated a PR review. A quality check identified issues. Now revise your findings.
+
+Original PR context:
+- number: {pr.number}
+- title: {pr.title}
+- author: {pr.author}
+- state: {pr.state}
+- draft: {pr.draft}
+- commits: {pr.commits}
+- changed_files: {pr.changed_files}
+- additions: {pr.additions}
+- deletions: {pr.deletions}
+- labels: {", ".join(pr.labels) if pr.labels else "(none)"}
+- requested_reviewers: {", ".join(pr.requested_reviewers) if pr.requested_reviewers else "(none)"}
+
+PR description:
+{pr.body[:4000]}
+{diff_section}
+
+Your original findings:
+{original_json}
+
+Quality issues identified:
+{critique_json}
+
+Regenerate the review addressing all issues listed in the critique. Keep strengths, fix problems.
+
+Follow the "Review Style" and "Automated Review Output Format" guidance from the skill above.
+
+Respond with ONLY valid JSON:
+{{
+  "findings": [
+    {{ <revised finding object per skill format> }}
+  ]
+}}"""
+
 
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
         prompt = self._build_catalog_prompt(pr)

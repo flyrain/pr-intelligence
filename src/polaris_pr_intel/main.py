@@ -46,7 +46,7 @@ def build_runtime():
     repo = _build_repository(settings.store_backend, settings.sqlite_path)
     llm = build_llm_adapter(settings)
     logger.info("Configured LLM provider: %s", _llm_display(llm.provider, llm.model))
-    reviewer = PRSubagentReviewer(llm)
+    reviewer = PRSubagentReviewer(llm, enable_self_review=settings.enable_self_review)
     gh = GitHubClient(settings.github_token, settings.github_owner, settings.github_repo)
     snapshot_ingestor = SnapshotIngestor(gh, repo)
     event_graph = EventGraph(repo, settings=settings)
