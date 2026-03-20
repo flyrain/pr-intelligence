@@ -2,38 +2,31 @@
 
 An intelligent GitHub repository monitoring service that leverages LangGraph and LLM agents to automate PR review prioritization, issue tracking, and daily reporting. Originally built for Apache Polaris, but configurable for any GitHub repository.
 
-**What it does:**
-- 🔍 **Smart PR Monitoring**: Automatically syncs and scores PRs based on staleness, size, and review requests
-- 🤖 **LLM-Powered Reviews**: Deep code analysis using configurable LLM providers (Claude Code, Anthropic, OpenAI, Gemini, or local CLI tools)
-- 📊 **Intelligent Reports**: Post-sync analysis generates actionable daily reports highlighting PRs and issues needing attention
-- ⚡ **Async Queue System**: Parallel PR review processing with configurable worker count
-- 🎯 **Priority Scoring**: Deterministic scoring rules identify the most important PRs and issues
-- 🔗 **Webhook Integration**: Real-time updates via GitHub webhooks
-
 License: Apache-2.0. See [LICENSE](LICENSE).
 
-## Key Capabilities
+## Key Features
 
 ### 🎯 Intelligent PR Prioritization
-- **Scoring rules** consider staleness (24h/72h thresholds), diff size, file count, and explicit review requests
+- **Smart scoring rules** consider staleness (24h/72h thresholds), diff size, file count, and explicit review requests
 - **Configurable thresholds** let you tune what qualifies as "needs review"
 - **Target reviewer tracking**: automatically highlight PRs assigned to specific team members
+- **Deterministic scoring**: consistent prioritization across syncs
 
 ### 🤖 Multi-Provider LLM Support
 - **Local CLI providers**: Claude Code, Codex (code-aware with local repo context)
 - **Cloud providers**: Anthropic, OpenAI, Gemini
 - **Heuristic fallback**: deterministic output when LLM unavailable
 - **Custom skills**: separate prompts for deep PR reviews vs. batch report analysis
-- **Multi-step self-review**: optional 3-step critique-and-revise process for higher quality reviews (see below)
+- **Multi-step self-review**: optional 3-step critique-and-revise process for higher quality reviews (see [below](#self-review-feature-experimental))
 
-### 📊 Automated Reporting
-- **Daily reports** with attention-focused summaries
+### 📊 Automated Reporting & Analysis
+- **Daily reports** with attention-focused summaries highlighting PRs and issues needing attention
 - **Catalog routing** for specialized PR categories (architecture, security, performance, etc.)
 - **Batch LLM analysis** processes multiple PRs efficiently in a single call
 - **Structured artifacts** accessible via REST API for integration with other tools
 
 ### ⚡ Scalable Async Processing
-- **In-memory job queue** with configurable worker count
+- **In-memory job queue** with configurable worker count for parallel PR review processing
 - **Job deduplication**: prevents duplicate reviews for the same PR
 - **Timeout protection**: auto-fails stuck jobs after configurable duration
 - **Status tracking**: monitor queued/running/completed jobs via API
