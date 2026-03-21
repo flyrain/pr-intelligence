@@ -476,7 +476,7 @@ def create_app(
     .brand-copy {{
       min-width: 0;
     }}
-    h1,h2,h3 {{ font-family: "IBM Plex Serif", Georgia, serif; margin: 0 0 12px 0; }}
+    h1,h2,h3 {{ font-family: inherit; font-weight: 700; margin: 0 0 12px 0; }}
     h1 {{ font-size: 22px; margin-bottom: 1px; line-height: 1.02; }}
     h2 {{ font-size: 24px; margin-top: 18px; }}
     .muted {{ color: var(--muted); margin: 0; }}
@@ -563,9 +563,9 @@ def create_app(
     }}
     .tab-fold > summary {{
       cursor: pointer;
-      font-family: "IBM Plex Serif", Georgia, serif;
+      font-family: inherit;
       font-size: 24px;
-      font-weight: 600;
+      font-weight: 700;
       margin-bottom: 10px;
     }}
     .tab-fold[open] > summary {{
@@ -665,9 +665,9 @@ def create_app(
     }}
     .queue-section > summary {{
       cursor: pointer;
-      font-family: "IBM Plex Serif", Georgia, serif;
+      font-family: inherit;
       font-size: 20px;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--ink);
       margin-bottom: 8px;
     }}
@@ -841,7 +841,7 @@ def create_app(
       <article class="card"><div class="k">PRs Tracked</div><div class="v">{stats["prs_tracked"]}</div></article>
       <article class="card"><div class="k">Issues Tracked</div><div class="v">{stats["issues_tracked"]}</div></article>
       <article class="card"><div class="k">Needs Review Queue</div><div class="v">{stats["needs_review_queue"]}</div></article>
-      <article class="card"><div class="k">Interesting Issues Queue</div><div class="v">{stats["interesting_issues_queue"]}</div></article>
+      <article class="card"><div class="k">Interesting Issues</div><div class="v">{stats["interesting_issues_queue"]}</div></article>
       <article class="card"><div class="k">Deep PR Reviews</div><div class="v">{stats["deep_pr_reviews"]}</div></article>
     </section>
 
