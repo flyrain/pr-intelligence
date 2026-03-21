@@ -458,7 +458,7 @@ def create_app(
       border: 1px solid var(--line);
       background: linear-gradient(120deg, #0f1b2f 0%, #112138 55%, #0f2438 100%);
       border-radius: 18px;
-      padding: 20px;
+      padding: 12px 16px;
       box-shadow: 0 14px 34px rgba(0,0,0,0.35);
     }}
     .hero-top {{
@@ -470,27 +470,14 @@ def create_app(
     .hero-heading {{
       min-width: 0;
       display: flex;
-      align-items: center;
-      gap: 12px;
-    }}
-    .brand-mark {{
-      width: 96px;
-      height: 96px;
-      flex: 0 0 auto;
-      display: grid;
-      place-items: center;
-      filter: drop-shadow(0 8px 16px rgba(10, 20, 40, 0.35));
-    }}
-    .brand-mark svg {{
-      width: 96px;
-      height: 96px;
-      display: block;
+      align-items: flex-start;
+      gap: 0;
     }}
     .brand-copy {{
       min-width: 0;
     }}
     h1,h2,h3 {{ font-family: "IBM Plex Serif", Georgia, serif; margin: 0 0 12px 0; }}
-    h1 {{ font-size: 24px; margin-bottom: 2px; line-height: 1.02; }}
+    h1 {{ font-size: 22px; margin-bottom: 1px; line-height: 1.02; }}
     h2 {{ font-size: 24px; margin-top: 18px; }}
     .muted {{ color: var(--muted); margin: 0; }}
     .hero-side {{
@@ -501,13 +488,13 @@ def create_app(
       border: 1px solid rgba(45, 212, 191, 0.22);
       background: linear-gradient(135deg, #1f948f 0%, #177c80 100%);
       color: #f8fffe;
-      padding: 10px 12px;
+      padding: 8px 12px;
       border-radius: 12px;
       text-decoration: none;
       font-weight: 700;
       cursor: pointer;
       text-align: center;
-      min-height: 46px;
+      min-height: 40px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -695,8 +682,8 @@ def create_app(
       min-width: 0;
     }}
     .status-item {{
-      padding: 14px 16px 14px 18px;
-      border-radius: 18px;
+      padding: 9px 14px 9px 16px;
+      border-radius: 16px;
       background:
         radial-gradient(circle at top right, rgba(45, 212, 191, 0.08) 0%, transparent 30%),
         linear-gradient(180deg, rgba(14, 26, 44, 0.96) 0%, rgba(11, 21, 37, 0.98) 100%);
@@ -709,13 +696,13 @@ def create_app(
     .status-item::before {{
       content: "";
       position: absolute;
-      inset: 10px auto 10px 0;
+      inset: 7px auto 7px 0;
       width: 4px;
       border-radius: 999px;
       background: linear-gradient(180deg, var(--accent) 0%, #7dd3fc 100%);
     }}
     .status-item .k {{
-      font-size: 12px;
+      font-size: 11px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: #9fb7d8;
@@ -724,7 +711,7 @@ def create_app(
       display: inline;
     }}
     .status-item .v {{
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 500;
       color: #f8fbff;
       text-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
@@ -832,9 +819,6 @@ def create_app(
 	    <section class="hero">
 	      <div class="hero-top">
           <div class="hero-heading">
-            <div class="brand-mark" aria-hidden="true">
-              <img src="/docs-static/orca-transparent.png" alt="Orca Logo" style="width: 96px; height: 96px; display: block; object-fit: contain;">
-            </div>
             <div class="brand-copy">
 	          <h1>PR Intelligence</h1>
 	          <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
