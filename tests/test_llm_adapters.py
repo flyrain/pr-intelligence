@@ -225,6 +225,50 @@ def test_codex_local_adapter_logs_invocation_command(monkeypatch, caplog) -> Non
     assert "<prompt>" in caplog.text
 
 
+def test_codex_local_adapter_surfaces_sandboxed_codex_failure(monkeypatch) -> None:
+    adapter = CodexLocalAdapter(command="codex")
+
+    def _fake_run(*args, **kwargs):
+        raise subprocess.CalledProcessError(
+            returncode=101,
+            cmd="codex",
+            stderr="Could not create otel exporter: panicked during initialization",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    finding = adapter.analyze_pr("code-risk", "code risk and complexity", _pr())
+
+    assert "sandboxed Codex Desktop/session environment" in finding.summary
+
+
+def test_codex_local_adapter_strips_parent_codex_env(monkeypatch) -> None:
+    adapter = CodexLocalAdapter(command="codex", model="gpt-5-codex")
+    monkeypatch.setenv("CODEX_SANDBOX", "seatbelt")
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    captured_env: dict[str, str] | None = None
+
+    def _fake_run(*args, **kwargs):
+        nonlocal captured_env
+        assert "env" in kwargs
+        captured_env = dict(kwargs["env"])
+
+        class R:
+            stdout = '{"verdict":"medium","score":0.55,"summary":"moderate risk in changed auth path","recommendations":["add coverage for auth edge cases"],"confidence":0.7}'
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    adapter.analyze_pr("code-risk", "code risk and complexity", _pr())
+
+    assert captured_env is not None
+    assert "CODEX_SANDBOX" not in captured_env
+    assert "CODEX_THREAD_ID" not in captured_env
+    assert all(not key.startswith("CODEX_") for key in captured_env)
+
+
 def test_factory_builds_codex_local_adapter(monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "codex_local")
