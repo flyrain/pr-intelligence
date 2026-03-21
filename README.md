@@ -152,7 +152,7 @@ PORT=9090 ./run.sh serve
 - `REVIEW_JOB_WORKERS` (default: `1`; number of parallel async PR review workers. Increase for higher concurrency.)
 - `REVIEW_JOB_TIMEOUT_SEC` (default: `1200`; max time in seconds for a review job before marking as failed)
 - `ANALYSIS_TOP_SLICE_LIMIT` (default: `10`; number of top PRs sent to the report-analysis LLM per analysis run)
-- `ENABLE_SELF_REVIEW` (default: `false`; enable 3-step self-review process for PR reviews. See [Self-Review Feature](#self-review-feature-experimental) below.)
+- `ENABLE_SELF_REVIEW` (default: `true`; enable 3-step self-review process for PR reviews. See [Self-Review Feature](#self-review-feature-experimental) below.)
 - `ENABLE_PERIODIC_REFRESH` (default: `true`; enable automatic periodic refresh scheduler)
 - `REFRESH_INTERVAL_HOURS` (default: `2`; hours between automatic refreshes)
 
@@ -240,7 +240,7 @@ The service includes an optional **multi-step self-review** capability that impr
 
 ### How It Works
 
-When `ENABLE_SELF_REVIEW=true`, PR reviews use a 3-step process instead of single-pass generation:
+By default, PR reviews use a 3-step self-review process. When `ENABLE_SELF_REVIEW=true`, reviews use this 3-step process instead of single-pass generation:
 
 1. **Generate** - LLM produces initial review findings (same as normal)
 2. **Critique** - LLM examines its own findings against quality criteria:
@@ -259,7 +259,7 @@ Each step is a separate LLM invocation. If critique or revision fails, the syste
 - You're doing targeted reviews on critical PRs
 - You have budget for 3x LLM calls per review
 
-**Keep disabled (default) when:**
+**Disable it when:**
 - You need fast turnaround times
 - You're doing bulk/batch reviews
 - Cost optimization is a priority
@@ -594,4 +594,3 @@ Enable verbose logging by checking application logs when running the server. The
 - SQLite database: `.data/polaris_pr_intel.db` (default)
 - Change location: `export SQLITE_PATH=/path/to/db.sqlite`
 - Use in-memory storage for testing: `export STORE_BACKEND=memory`
-

@@ -410,7 +410,7 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Deep PR Reviews" in resp.text
     assert "No deep reviews yet." in resp.text
     assert "Review Jobs" in resp.text
-    assert "Refresh All Data" in resp.text
+    assert '>Sync</button>' in resp.text
     assert 'fetch("/refresh' in resp.text
     assert '<details class="tab-fold">' in resp.text
     assert '<details class="tab-fold" open>' not in resp.text
@@ -848,4 +848,3 @@ def test_refresh_endpoint() -> None:
 
     # Verify ingestor was called correctly
     assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None, "prune_missing_open_prs": True}
-

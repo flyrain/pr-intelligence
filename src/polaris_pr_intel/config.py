@@ -39,7 +39,7 @@ class Settings:
     analysis_top_slice_limit: int = 10
     enable_periodic_refresh: bool = True
     refresh_interval_hours: int = 2
-    enable_self_review: bool = False
+    enable_self_review: bool = True
 
 
 def _float_env(name: str, default: float) -> float:
@@ -125,5 +125,5 @@ def load_settings() -> Settings:
         analysis_top_slice_limit=_int_env("ANALYSIS_TOP_SLICE_LIMIT", 10),
         enable_periodic_refresh=os.getenv("ENABLE_PERIODIC_REFRESH", "true").lower() in ("true", "1", "yes"),
         refresh_interval_hours=_int_env("REFRESH_INTERVAL_HOURS", 2),
-        enable_self_review=os.getenv("ENABLE_SELF_REVIEW", "false").lower() in ("true", "1", "yes"),
+        enable_self_review=os.getenv("ENABLE_SELF_REVIEW", "true").lower() in ("true", "1", "yes"),
     )
