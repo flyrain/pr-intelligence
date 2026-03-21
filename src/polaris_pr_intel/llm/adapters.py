@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shlex
 import subprocess
@@ -25,6 +26,19 @@ def _log_cli_invocation(provider: str, cmd: list[str], prompt: str) -> None:
         shlex.join([*cmd, "<prompt>"]),
         len(prompt),
     )
+
+
+def _codex_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    # `subprocess.run()` inherits the parent environment by default. When this API
+    # server is launched from Codex Desktop, env vars like `CODEX_SANDBOX` and
+    # `CODEX_THREAD_ID` are present for the parent session. Passing them through to
+    # a fresh nested `codex exec` can confuse the child CLI into booting with
+    # parent-session sandbox/runtime state instead of starting a clean run.
+    for key in list(env):
+        if key.startswith("CODEX_"):
+            env.pop(key, None)
+    return env
 
 
 @dataclass
@@ -850,6 +864,22 @@ class CodexLocalAdapter(HeuristicLLMAdapter):
         except Exception:
             return ""
 
+    @staticmethod
+    def _format_failure_detail(exc: Exception) -> str:
+        detail = str(exc)
+        if isinstance(exc, subprocess.CalledProcessError):
+            stderr = (exc.stderr or "").strip().replace("\n", " ")
+            stdout = (exc.stdout or "").strip().replace("\n", " ")
+            detail = stderr or stdout or detail
+        lowered = detail.lower()
+        if "attempted to create a null object" in lowered or "could not create otel exporter" in lowered:
+            return (
+                "codex_local CLI crashed before producing output. This commonly happens when the API "
+                "server is running inside a sandboxed Codex Desktop/session environment on macOS. "
+                "Run the service from a normal terminal or use claude_code_local in this environment."
+            )
+        return detail
+
     def _build_prompt(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> str:
         skill_prompt = self._load_skill_prompt(self.review_skill_file)
         diff_section = ""
@@ -998,11 +1028,7 @@ PR description:
             return self._run_prompt(prompt, agent_name, focus_area, pr)
         except Exception as exc:
             fallback = super().analyze_pr(agent_name, focus_area, pr)
-            detail = str(exc)
-            if isinstance(exc, subprocess.CalledProcessError):
-                stderr = (exc.stderr or "").strip().replace("\n", " ")
-                stdout = (exc.stdout or "").strip().replace("\n", " ")
-                detail = stderr or stdout or detail
+            detail = self._format_failure_detail(exc)
             fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
             return fallback
 
@@ -1204,11 +1230,7 @@ Respond with ONLY valid JSON:
             return self._run_prompt(prompt, "catalog-router", "catalog routing and prioritization", pr)
         except Exception as exc:
             fallback = super().analyze_catalog_routing(pr)
-            detail = str(exc)
-            if isinstance(exc, subprocess.CalledProcessError):
-                stderr = (exc.stderr or "").strip().replace("\n", " ")
-                stdout = (exc.stdout or "").strip().replace("\n", " ")
-                detail = stderr or stdout or detail
+            detail = self._format_failure_detail(exc)
             fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
             return fallback
 
@@ -1330,6 +1352,7 @@ Pull requests:
                 text=True,
                 timeout=self.timeout_sec,
                 cwd=self.repo_dir or None,
+                env=_codex_subprocess_env(),
             )
             raw_output = ""
             if last_message_path:
