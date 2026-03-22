@@ -63,7 +63,7 @@ def test_configure_logging_installs_handler_when_missing(monkeypatch) -> None:
 
 
 def test_default_review_and_analysis_skill_paths_are_distinct(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.delenv("REVIEW_SKILL_FILE", raising=False)
     monkeypatch.delenv("ANALYSIS_SKILL_FILE", raising=False)
 
@@ -75,9 +75,27 @@ def test_default_review_and_analysis_skill_paths_are_distinct(monkeypatch) -> No
 
 
 def test_self_review_defaults_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.delenv("ENABLE_SELF_REVIEW", raising=False)
 
     settings = load_settings()
 
     assert settings.enable_self_review is True
+
+
+def test_load_settings_accepts_legacy_github_token(monkeypatch) -> None:
+    monkeypatch.delenv("PR_INTEL_GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "legacy-token")
+
+    settings = load_settings()
+
+    assert settings.github_token == "legacy-token"
+
+
+def test_load_settings_prefers_project_specific_token(monkeypatch) -> None:
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "project-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "legacy-token")
+
+    settings = load_settings()
+
+    assert settings.github_token == "project-token"

@@ -64,9 +64,9 @@ def _int_env(name: str, default: int) -> int:
 
 
 def load_settings() -> Settings:
-    token = os.getenv("GITHUB_TOKEN", "")
+    token = os.getenv("PR_INTEL_GITHUB_TOKEN", "").strip() or os.getenv("GITHUB_TOKEN", "").strip()
     if not token:
-        raise RuntimeError("GITHUB_TOKEN is required")
+        raise RuntimeError("PR_INTEL_GITHUB_TOKEN or GITHUB_TOKEN is required")
     return Settings(
         github_token=token,
         github_owner=os.getenv("GITHUB_OWNER", "apache"),

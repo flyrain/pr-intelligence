@@ -111,7 +111,7 @@ def test_claude_code_local_adapter_raises_on_auth_failure(monkeypatch) -> None:
 
 
 def test_factory_builds_claude_code_local_adapter(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")
     monkeypatch.setenv("LLM_MODEL", "claude-local")
     monkeypatch.setenv("CLAUDE_CODE_CMD", "claude")
@@ -125,7 +125,7 @@ def test_factory_builds_claude_code_local_adapter(monkeypatch) -> None:
 
 
 def test_factory_fails_for_empty_repo_dir(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")
     monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "   ")
     settings = load_settings()
@@ -134,7 +134,7 @@ def test_factory_fails_for_empty_repo_dir(monkeypatch) -> None:
 
 
 def test_factory_fails_for_invalid_repo_dir(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")
     monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/path/that/does/not/exist")
     settings = load_settings()
@@ -270,7 +270,7 @@ def test_codex_local_adapter_strips_parent_codex_env(monkeypatch) -> None:
 
 
 def test_factory_builds_codex_local_adapter(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "codex_local")
     monkeypatch.setenv("LLM_MODEL", "gpt-5-codex")
     monkeypatch.setenv("CODEX_CMD", "codex")
@@ -285,7 +285,7 @@ def test_factory_builds_codex_local_adapter(monkeypatch) -> None:
 
 
 def test_factory_fails_for_invalid_codex_repo_dir(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "codex_local")
     monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/path/that/does/not/exist")
     settings = load_settings()
@@ -294,7 +294,7 @@ def test_factory_fails_for_invalid_codex_repo_dir(monkeypatch) -> None:
 
 
 def test_factory_backward_compat_old_repo_dir_vars(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "codex_local")
     monkeypatch.delenv("LOCAL_REVIEW_REPO_DIR", raising=False)
     monkeypatch.setenv("CODEX_REPO_DIR", "/tmp")

@@ -42,7 +42,7 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 ```bash
 ./run.sh bootstrap
 
-export GITHUB_TOKEN=your_read_only_token
+export PR_INTEL_GITHUB_TOKEN=your_read_only_token
 export LOCAL_REVIEW_REPO_DIR=/path/to/apache/polaris
 ./run.sh serve
 ```
@@ -140,8 +140,10 @@ PORT=9090 ./run.sh serve
 ## Required Configuration
 
 ### Required
-- `GITHUB_TOKEN`
+- `PR_INTEL_GITHUB_TOKEN`
 - `LOCAL_REVIEW_REPO_DIR` (required when using local CLI providers: `claude_code_local` / `codex_local`)
+
+`PR_INTEL_GITHUB_TOKEN` is the preferred project-specific variable. `GITHUB_TOKEN` is still accepted as a backward-compatible fallback during migration.
 
 ### Common optional
 - `GITHUB_OWNER` (default: `apache`)
@@ -515,11 +517,11 @@ pytest --cov=polaris_pr_intel tests/
 
 ### Common Issues
 
-**Missing GITHUB_TOKEN**
+**Missing GitHub token**
 ```
-RuntimeError: GITHUB_TOKEN is required
+RuntimeError: PR_INTEL_GITHUB_TOKEN or GITHUB_TOKEN is required
 ```
-→ Set `export GITHUB_TOKEN=your_token_here` before running
+→ Prefer `export PR_INTEL_GITHUB_TOKEN=your_token_here` before running
 
 **LOCAL_REVIEW_REPO_DIR required for local providers**
 ```
