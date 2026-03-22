@@ -240,7 +240,7 @@ The service includes an optional **multi-step self-review** capability that impr
 
 ### How It Works
 
-By default, PR reviews use a 3-step self-review process. When `ENABLE_SELF_REVIEW=true`, reviews use this 3-step process instead of single-pass generation:
+By default, PR reviews use a 3-step self-review process:
 
 1. **Generate** - LLM produces initial review findings (same as normal)
 2. **Critique** - LLM examines its own findings against quality criteria:
