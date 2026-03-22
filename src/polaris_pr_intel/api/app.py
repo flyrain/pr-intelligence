@@ -286,12 +286,6 @@ def create_app(
         local_now = datetime.now().astimezone()
         local_today = local_now.date()
         local_tz = local_now.tzinfo
-        latest_markdown = _latest_report_markdown()
-        latest_report_html = (
-            _report_markdown_to_html(latest_markdown)
-            if latest_markdown
-            else "<h2>No Report Yet</h2><p>Run <code>POST /refresh</code> to generate one.</p>"
-        )
         new_updated_rows = []
         def _is_updated_today_local(updated_at: datetime) -> bool:
             dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
@@ -897,13 +891,6 @@ def create_app(
               <tbody>{''.join(visible_new_updated_rows) if new_updated_rows else '<tr><td colspan="4">No PR updates observed today.</td></tr>'}</tbody>
             </table>
             {folded_new_updated_html}
-          </details>
-        </article>
-        <article class="card" style="margin-top: 14px;">
-          <details class="tab-fold">
-            <summary>Latest Report</summary>
-            <p class="muted">Date: {escape(stats["latest_report_date"] or "N/A")}</p>
-            <div class="report">{latest_report_html}</div>
           </details>
         </article>
       </div>

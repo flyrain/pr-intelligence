@@ -572,7 +572,6 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "text/html" in resp.headers["content-type"]
     assert "Polaris PR Intelligence" in resp.text
     assert "LLM Provider: codex_local / gpt-5-codex" in resp.text
-    assert "Latest Report" in resp.text
     assert "PRs Needing Review" in resp.text
     assert "Deep PR Reviews" in resp.text
     assert "No deep reviews yet." in resp.text
@@ -584,11 +583,9 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert '<details class="queue-section">' in resp.text
     assert '<details class="queue-section" open>' not in resp.text
     assert "New/Updated PRs Today" in resp.text
-    assert "Aging Open PRs (72h+)" in resp.text
     assert "Review" in resp.text
     assert resp.text.count("New/Updated PRs Today") >= 1
     assert resp.text.index("<summary>PRs Needing Review") < resp.text.index("<summary>New/Updated PRs Today</summary>")
-    assert resp.text.index("<summary>New/Updated PRs Today</summary>") < resp.text.index("<summary>Latest Report</summary>")
     assert '<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>' in resp.text
 
 
