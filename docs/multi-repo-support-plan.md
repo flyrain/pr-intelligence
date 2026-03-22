@@ -5,36 +5,50 @@
 Keep the product repo-scoped.
 
 - `/ui` should be a simple repo index
-- each repo gets its own dashboard and API routes
+- select the repo with a request parameter, not a long route prefix
 - do not mix PRs from different repos into one default queue
 
 This is the simplest path and matches how the current app already works.
 
 ```mermaid
 flowchart TD
-    A["/ui"] --> B["apache/polaris"]
-    A --> C["my-org/service-a"]
-    B --> D["/repos/apache/polaris/ui"]
-    C --> E["/repos/my-org/service-a/ui"]
+    A["/ui"] --> B["repo list"]
+    B --> C["/ui?repo=apache/polaris"]
+    B --> D["/ui?repo=my-org/service-a"]
 ```
 
-## Repo-Scoped Routes
+## Repo Parameter
+
+Use one required query parameter:
+
+- `repo=owner/repo`
+
+Example:
+
+- `repo=apache/polaris`
+
+Use query parameters for GET and POST.
+
+- do not put repo identity in GET payloads
+- do not repeat `/{owner}/{repo}` in every route
+
+## Routes
 
 Add these routes:
 
 - `GET /repos`
-- `GET /repos/{owner}/{repo}/stats`
-- `POST /repos/{owner}/{repo}/refresh`
-- `GET /repos/{owner}/{repo}/queues/needs-review`
-- `GET /repos/{owner}/{repo}/queues/interesting-issues`
-- `GET /repos/{owner}/{repo}/reports/daily/latest.md`
-- `POST /repos/{owner}/{repo}/reviews/pr/{pr_number}/run`
-- `POST /repos/{owner}/{repo}/reviews/pr/{pr_number}/run-sync`
-- `GET /repos/{owner}/{repo}/reviews/pr/{pr_number}/job`
-- `GET /repos/{owner}/{repo}/reviews/pr/{pr_number}/latest`
-- `GET /repos/{owner}/{repo}/reviews/pr/{pr_number}/latest.md`
-- `GET /repos/{owner}/{repo}/reviews/pr/{pr_number}/latest.html`
-- `GET /repos/{owner}/{repo}/reviews/pr/top`
+- `GET /stats?repo=owner/repo`
+- `POST /refresh?repo=owner/repo`
+- `GET /queues/needs-review?repo=owner/repo`
+- `GET /queues/interesting-issues?repo=owner/repo`
+- `GET /reports/daily/latest.md?repo=owner/repo`
+- `POST /reviews/pr/{pr_number}/run?repo=owner/repo`
+- `POST /reviews/pr/{pr_number}/run-sync?repo=owner/repo`
+- `GET /reviews/pr/{pr_number}/job?repo=owner/repo`
+- `GET /reviews/pr/{pr_number}/latest?repo=owner/repo`
+- `GET /reviews/pr/{pr_number}/latest.md?repo=owner/repo`
+- `GET /reviews/pr/{pr_number}/latest.html?repo=owner/repo`
+- `GET /reviews/pr/top?repo=owner/repo`
 
 ```mermaid
 flowchart LR
@@ -58,9 +72,9 @@ Make `/ui` a repo list page. Each repo card should show:
 - interesting-issues count
 - last sync
 
-### `/repos/{owner}/{repo}/ui`
+### `/ui?repo=owner/repo`
 
-Move the current dashboard here with minimal changes.
+Load the current dashboard here with minimal changes.
 
 Keep the existing sections:
 
@@ -105,15 +119,15 @@ sqlite_path = ".data/my-org__service-a.db"
 ## Compatibility
 
 - if only one repo is configured, existing non-repo-scoped routes can keep working
-- if multiple repos are configured, repo-scoped routes are the source of truth
+- if multiple repos are configured, `repo` becomes required on repo-specific routes
 
 ## Implementation Steps
 
 1. Add a small repo registry in the app layer.
 2. Load multiple repo configs.
 3. Create one runtime per repo.
-4. Add the repo-scoped routes listed above.
-5. Move the current dashboard to `/repos/{owner}/{repo}/ui`.
+4. Add the repo-parameter routes listed above.
+5. Load the current dashboard from `/ui?repo=owner/repo`.
 6. Turn `/ui` into the repo index.
 7. Make review jobs repo-aware.
 8. Add tests for two repos with overlapping PR numbers.
@@ -123,8 +137,8 @@ sqlite_path = ".data/my-org__service-a.db"
 Cover at least:
 
 - two repos both having PR `#123`
-- repo-scoped queue routes
-- repo-scoped review routes
+- repo-parameter queue routes
+- repo-parameter review routes
 - repo index rendering
 - single-repo compatibility behavior
 
