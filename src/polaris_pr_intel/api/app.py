@@ -348,7 +348,16 @@ def create_app(
         for item in _review_queue_items():
             review_rows.append(
                 f"<tr><td><a href=\"{escape(item.url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{item.number}</a></td>"
-                f"<td>{escape(item.title)}</td><td>{item.score:.1f}</td><td>{escape(', '.join(item.reasons))}</td>"
+                f"<td>{escape(item.title)}</td>"
+                "<td class=\"queue-overflow-cell\">"
+                "<details class=\"queue-overflow\">"
+                "<summary aria-label=\"Show score and reasons\">...</summary>"
+                "<div class=\"queue-overflow-menu\">"
+                f"<div><span class=\"queue-overflow-label\">Score</span><span>{item.score:.1f}</span></div>"
+                f"<div><span class=\"queue-overflow-label\">Reasons</span><span>{escape(', '.join(item.reasons))}</span></div>"
+                "</div>"
+                "</details>"
+                "</td>"
                 f"<td><button class=\"action-btn\" onclick=\"runPrReview({item.number}, this)\">Review</button></td></tr>"
             )
         visible_review_rows = review_rows[:10]
@@ -357,7 +366,7 @@ def create_app(
             "<details class=\"folded-section\">"
             f"<summary>Show {len(folded_review_rows)} more PRs</summary>"
             "<table>"
-            "<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>"
+            "<thead><tr><th>PR</th><th>Title</th><th></th><th>Action</th></tr></thead>"
             f"<tbody>{''.join(folded_review_rows)}</tbody>"
             "</table>"
             "</details>"
@@ -661,6 +670,66 @@ def create_app(
       opacity: 0.65;
       cursor: default;
     }}
+    .queue-overflow-cell {{
+      width: 1%;
+      white-space: nowrap;
+      position: relative;
+    }}
+    .queue-overflow {{
+      position: relative;
+    }}
+    .queue-overflow > summary {{
+      list-style: none;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #132138;
+      color: var(--ink);
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+    }}
+    .queue-overflow > summary::-webkit-details-marker {{
+      display: none;
+    }}
+    .queue-overflow[open] > summary {{
+      background: #182844;
+      border-color: #36537b;
+    }}
+    .queue-overflow-menu {{
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      z-index: 20;
+      width: min(360px, 60vw);
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0d1728;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
+      white-space: normal;
+    }}
+    .queue-overflow-menu > div {{
+      display: grid;
+      grid-template-columns: 64px 1fr;
+      gap: 10px;
+      align-items: start;
+    }}
+    .queue-overflow-menu > div + div {{
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(147, 164, 187, 0.16);
+    }}
+    .queue-overflow-label {{
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }}
     .folded-section {{
       margin-top: 10px;
       border: 1px solid var(--line);
@@ -877,8 +946,8 @@ def create_app(
           <details class="queue-section">
             <summary>PRs Needing Review ({stats["needs_review_queue"]})</summary>
             <table>
-              <thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>
-              <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="5">No PRs queued.</td></tr>'}</tbody>
+              <thead><tr><th>PR</th><th>Title</th><th></th><th>Action</th></tr></thead>
+              <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="4">No PRs queued.</td></tr>'}</tbody>
             </table>
             {folded_review_html}
           </details>

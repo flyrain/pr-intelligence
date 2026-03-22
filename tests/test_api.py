@@ -617,7 +617,7 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Review" in resp.text
     assert resp.text.count("New/Updated PRs Today") >= 1
     assert resp.text.index("<summary>PRs Needing Review") < resp.text.index("<summary>New/Updated PRs Today</summary>")
-    assert '<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>' in resp.text
+    assert '<thead><tr><th>PR</th><th>Title</th><th></th><th>Action</th></tr></thead>' in resp.text
 
 
 def test_ui_new_updated_prs_folds_after_first_ten() -> None:
@@ -813,6 +813,54 @@ def test_ui_needs_review_folds_after_first_ten() -> None:
     resp = client.get("/ui")
     assert resp.status_code == 200
     assert resp.text.count("Show 2 more PRs") >= 1
+
+
+def test_ui_needs_review_uses_overflow_menu_for_score_and_reasons() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=220,
+            title="Overflow menu PR",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=3,
+            deletions=1,
+            html_url="https://example.com/pr/220",
+            updated_at=now,
+        )
+    )
+    repo.save_analysis_run(
+        AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=220,
+                    needs_review=True,
+                    priority_score=9.5,
+                    priority_band="high",
+                    priority_reason="active-discussion",
+                    tags=["review-requested", "security-risk"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.8,
+                )
+            ]
+        )
+    )
+
+    resp = client.get("/ui")
+
+    assert resp.status_code == 200
+    assert 'aria-label="Show score and reasons"' in resp.text
+    assert '<span class="queue-overflow-label">Score</span><span>9.5</span>' in resp.text
+    assert "active-discussion, review-requested, security-risk" in resp.text
 
 
 def test_ui_interesting_issues_folds_after_first_ten() -> None:
