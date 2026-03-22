@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from polaris_pr_intel.models import PRSubagentFinding, PullRequestSnapshot
+from polaris_pr_intel.models import PRAttentionContext, PRAttentionDecision, PRSubagentFinding, PullRequestSnapshot
 
 
 class LLMAdapter(Protocol):
@@ -14,3 +14,4 @@ class LLMAdapter(Protocol):
     def analyze_pr_with_self_review(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]: ...
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding: ...
     def analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]) -> dict[int, PRSubagentFinding]: ...
+    def analyze_attention_batch(self, contexts: list[PRAttentionContext]) -> dict[int, PRAttentionDecision]: ...

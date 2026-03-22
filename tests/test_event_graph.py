@@ -7,7 +7,7 @@ from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.llm.adapters import HeuristicLLMAdapter
-from polaris_pr_intel.models import GitHubEvent, PRSubagentFinding, PullRequestSnapshot, ReviewSignal
+from polaris_pr_intel.models import GitHubEvent, PRAttentionDecision, PullRequestSnapshot, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.agents.pr_reviewer import PRSubagentReviewer
 from polaris_pr_intel.agents.derived_analysis import DerivedAnalysisAgent
@@ -252,31 +252,31 @@ def test_daily_report_analysis_preserves_requested_you_and_security_label_catalo
     assert "security-risk" in item.catalogs
 
 
-def test_derived_analysis_uses_catalog_routing_method() -> None:
+def test_derived_analysis_uses_attention_batch_method() -> None:
     class _RecordingLLM(HeuristicLLMAdapter):
         def __init__(self) -> None:
             super().__init__()
-            self.catalog_batch_calls: list[list[int]] = []
+            self.attention_batch_calls: list[list[int]] = []
             self.review_calls: list[int] = []
 
         def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot):
             self.review_calls.append(pr.number)
             return super().analyze_pr(agent_name, focus_area, pr)
 
-        def analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]):
-            self.catalog_batch_calls.append([pr.number for pr in prs])
+        def analyze_attention_batch(self, contexts):
+            self.attention_batch_calls.append([ctx.pr_number for ctx in contexts])
             return {
-                pr.number: PRSubagentFinding(
-                    agent_name="catalog-router",
-                    focus_area="catalog routing and prioritization",
-                    verdict="medium",
-                    score=0.6,
-                    summary=f"route pr {pr.number}",
-                    recommendations=["route to needs-review"],
-                    suggested_catalogs=["needs-review"],
+                ctx.pr_number: PRAttentionDecision(
+                    pr_number=ctx.pr_number,
+                    needs_review=True,
+                    priority_score=8.0,
+                    priority_band="high",
+                    priority_reason=f"prioritize pr {ctx.pr_number}",
+                    tags=["active-discussion"],
+                    suggested_catalogs=["needs-review", "recently-updated"],
                     confidence=0.7,
                 )
-                for pr in prs
+                for ctx in contexts
             }
 
     repo = InMemoryRepository()
@@ -308,7 +308,7 @@ def test_derived_analysis_uses_catalog_routing_method() -> None:
     run, _ = agent.run()
 
     assert any(item.number == 604 for item in run.items)
-    assert llm.catalog_batch_calls == [[604]]
+    assert llm.attention_batch_calls == [[604]]
     assert llm.review_calls == []
 
 
@@ -439,3 +439,39 @@ def test_review_now_deprioritizes_already_reviewed_and_draft_prs() -> None:
     assert "Draft PR" not in review_section
     assert "Reviewed PR" in review_section
     assert review_section.index("Fresh PR") < review_section.index("Reviewed PR")
+
+
+def test_derived_analysis_includes_activity_velocity_note() -> None:
+    repo = InMemoryRepository()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=706,
+            title="Busy PR",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=["alice"],
+            comments=5,
+            review_comments=0,
+            commits=1,
+            changed_files=2,
+            additions=20,
+            deletions=5,
+            activity_comments_24h=5,
+            html_url="https://example.com/pr/706",
+            updated_at=now - timedelta(hours=1),
+        )
+    )
+    repo.save_review_signal(
+        ReviewSignal(pr_number=706, score=3.0, reasons=["requested-you", "comments-24h:5"], needs_review=True)
+    )
+
+    graph = DailyReportGraph(repo, llm=HeuristicLLMAdapter(), settings=_settings())
+    graph.invoke()
+
+    report = repo.latest_daily_report()
+    assert report is not None
+    assert "5 comments in last 24h" in report.markdown

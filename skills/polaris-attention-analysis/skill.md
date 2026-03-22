@@ -1,18 +1,18 @@
 ---
-name: polaris-report-analysis
+name: polaris-attention-analysis
 description: This skill should be used when the task is to analyze many Apache Polaris pull requests or issues after sync, generate attention-oriented reports, rank what needs action now, or assign items into internal catalogs such as needs-review, aging-prs, security-risk, release-risk, interesting-issues, and recently-updated.
 ---
 
-# Apache Polaris Report Analysis Skill
+# Apache Polaris Attention Analysis Skill
 
-Use this skill for post-sync triage, report generation, and catalog routing across many PRs/issues in the `apache/polaris` repository.
+Use this skill for post-sync triage, attention ranking, report generation, and queue ordering across many PRs/issues in the `apache/polaris` repository.
 
 ## When This Skill Applies
 
 Use when the task is not "review this one PR", but instead:
 - rank multiple PRs for attention
 - decide what belongs in `Review Now`
-- build daily/attention reports
+- build daily or attention reports
 - route items into internal catalogs
 - summarize which PRs/issues need action now
 
@@ -20,14 +20,21 @@ Use when the task is not "review this one PR", but instead:
 
 ### Review Now
 - Prioritize PRs that changed recently and are still actively moving
-- Prefer PRs explicitly waiting on the target reviewer (`requested-you`) when they are still recent
-- Prefer unreviewed PRs over PRs that already show prior review activity
+- Prefer PRs with clear ongoing review activity in the last 24h or 7d
+- Prefer PRs explicitly waiting on the target reviewer (`requested-you`) when they are still active
+- Prefer unreviewed PRs over PRs that already show prior review attention, unless current activity is high
 - Draft PRs are lower priority and usually should not appear in `Review Now`
 
-### Aging / Ignore For Now
+### Defer For Now
 - If a PR has not changed for a long time, do not put it in `Review Now`
-- Long-stale PRs belong in an aging/nudge section instead of the immediate attention queue
+- Long-stale PRs belong in an aging or nudge section instead of the immediate attention queue
 - If a PR was already reviewed and has not changed recently, deprioritize it heavily
+
+### Relative Ranking
+- Compare PRs against each other, not independently
+- Strong recent discussion is usually a better "attention now" signal than old passive staleness
+- Large or risky PRs can outrank smaller PRs even if both are active
+- A stale PR can still rank high if the change is clearly security- or release-sensitive
 
 ### What Counts As Prior Review
 - Existing review comments

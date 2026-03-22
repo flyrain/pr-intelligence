@@ -82,3 +82,33 @@ def test_review_need_does_not_force_when_requested_reviewer_is_different() -> No
 
     assert signal.needs_review is False
     assert "requested-you" not in signal.reasons
+
+
+def test_score_review_need_downgrades_long_inactive_prs() -> None:
+    settings = Settings(github_token="test-token", review_inactive_days=5, review_inactive_penalty_points=3.0)
+    pr = _pr(updated_at=datetime.now(timezone.utc) - timedelta(days=6))
+
+    score, reasons = score_review_need(pr, settings=settings)
+
+    assert score == 0.0
+    assert reasons == ["stale-over-24h", "stale-over-72h", "inactive-over-5d"]
+
+
+def test_review_need_adds_recent_comment_velocity_reason() -> None:
+    agent = ReviewNeedAgent(_settings())
+    pr = _pr(activity_comments_24h=5)
+
+    signal = agent.run(pr)
+
+    assert "comments-24h:5" in signal.reasons
+    assert "hot-activity-24h" in signal.reasons
+
+
+def test_score_review_need_boosts_recent_activity() -> None:
+    settings = Settings(github_token="test-token")
+    pr = _pr(activity_comments_24h=3)
+
+    score, reasons = score_review_need(pr, settings=settings)
+
+    assert score == 0.75
+    assert reasons == ["active-discussion-24h"]

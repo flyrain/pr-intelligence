@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -33,9 +33,30 @@ class GitHubClient:
     def get_pull_request(self, number: int, include_diff: bool = False) -> PullRequestSnapshot:
         data = self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")
         pr = self._to_pr_snapshot(data)
+        pr.activity_comments_24h = self.get_pull_request_activity_comments(number, since_hours=24)
         if include_diff:
             pr.diff_text = self.get_pull_request_diff(number)
         return pr
+
+    def get_pull_request_activity_comments(self, number: int, since_hours: int = 24) -> int:
+        since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        issue_comments = self._count_recent_items(
+            f"/repos/{self.owner}/{self.repo}/issues/{number}/comments",
+            since=since,
+            timestamp_key="created_at",
+        )
+        review_comments = self._count_recent_items(
+            f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments",
+            since=since,
+            timestamp_key="created_at",
+        )
+        reviews = self._count_recent_items(
+            f"/repos/{self.owner}/{self.repo}/pulls/{number}/reviews",
+            since=since,
+            timestamp_key="submitted_at",
+            require_body=True,
+        )
+        return issue_comments + review_comments + reviews
 
     def get_pull_request_diff(self, number: int, max_chars: int = 120_000) -> str:
         """Fetch the combined patch for all files in a PR."""
@@ -74,6 +95,37 @@ class GitHubClient:
         )
         issues = [i for i in data if "pull_request" not in i]
         return [self._to_issue_snapshot(issue) for issue in issues]
+
+    def _count_recent_items(
+        self,
+        path: str,
+        *,
+        since: datetime,
+        timestamp_key: str,
+        require_body: bool = False,
+    ) -> int:
+        count = 0
+        page = 1
+        while True:
+            data = self._get(path, params={"per_page": 100, "page": page})
+            if not data:
+                break
+            stop_paging = False
+            for item in data:
+                timestamp = item.get(timestamp_key)
+                if not timestamp:
+                    continue
+                created_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                if created_at < since:
+                    stop_paging = True
+                    continue
+                if require_body and not (item.get("body") or "").strip():
+                    continue
+                count += 1
+            if stop_paging or len(data) < 100:
+                break
+            page += 1
+        return count
 
     @staticmethod
     def _to_pr_snapshot(pr: dict[str, Any]) -> PullRequestSnapshot:

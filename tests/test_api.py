@@ -216,10 +216,69 @@ def test_needs_review_filters_to_target_login_when_configured(monkeypatch) -> No
     queued = client.get("/queues/needs-review")
     assert queued.status_code == 200
     data = queued.json()
-    assert [item["number"] for item in data] == [1]
+    assert [item["number"] for item in data] == [1, 2]
 
     stats = client.get("/stats").json()
-    assert stats["stats"]["needs_review_queue"] == 1
+    assert stats["stats"]["needs_review_queue"] == 2
+
+
+def test_needs_review_prefers_persisted_analysis_run_ordering() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    for number, title in ((11, "Lower"), (12, "Higher")):
+        repo.upsert_pr(
+            PullRequestSnapshot(
+                number=number,
+                title=title,
+                body="",
+                state="open",
+                draft=False,
+                author="x",
+                labels=[],
+                requested_reviewers=[],
+                comments=0,
+                review_comments=0,
+                commits=1,
+                changed_files=1,
+                additions=1,
+                deletions=1,
+                html_url=f"https://example.com/pr/{number}",
+                updated_at=now,
+            )
+        )
+    repo.save_review_signal(ReviewSignal(pr_number=11, score=5.0, reasons=["reviewers-requested"], needs_review=True))
+    repo.save_review_signal(ReviewSignal(pr_number=12, score=3.0, reasons=["reviewers-requested"], needs_review=True))
+    repo.save_analysis_run(
+        AnalysisRun(
+            items=[
+                AnalysisItem(
+                    item_type="pr",
+                    number=12,
+                    title="Higher",
+                    url="https://example.com/pr/12",
+                    score=9.0,
+                    heuristic_reasons=["hot-activity-24h", "comments-24h:5"],
+                    catalogs=["needs-review"],
+                    updated_at=now,
+                ),
+                AnalysisItem(
+                    item_type="pr",
+                    number=11,
+                    title="Lower",
+                    url="https://example.com/pr/11",
+                    score=1.0,
+                    heuristic_reasons=["inactive-over-7d"],
+                    catalogs=["needs-review"],
+                    updated_at=now,
+                ),
+            ]
+        )
+    )
+
+    queued = client.get("/queues/needs-review")
+
+    assert queued.status_code == 200
+    assert [item["number"] for item in queued.json()] == [12, 11]
 
 
 def test_needs_review_excludes_closed_prs() -> None:

@@ -14,6 +14,12 @@ class Settings:
     issue_interesting_threshold: float = 2.0
     review_stale_24h_points: float = 1.5
     review_stale_72h_points: float = 1.5
+    review_inactive_days: int = 7
+    review_inactive_penalty_points: float = 2.0
+    review_activity_hot_comments_24h_threshold: int = 5
+    review_activity_hot_points: float = 1.5
+    review_activity_warm_comments_24h_threshold: int = 2
+    review_activity_warm_points: float = 0.75
     review_requested_points: float = 2.0
     review_large_diff_points: float = 1.5
     review_medium_diff_points: float = 1.0
@@ -76,6 +82,12 @@ def load_settings() -> Settings:
         issue_interesting_threshold=_float_env("ISSUE_INTERESTING_THRESHOLD", 2.0),
         review_stale_24h_points=_float_env("REVIEW_STALE_24H_POINTS", 1.5),
         review_stale_72h_points=_float_env("REVIEW_STALE_72H_POINTS", 1.5),
+        review_inactive_days=_int_env("REVIEW_INACTIVE_DAYS", 7),
+        review_inactive_penalty_points=_float_env("REVIEW_INACTIVE_PENALTY_POINTS", 2.0),
+        review_activity_hot_comments_24h_threshold=_int_env("REVIEW_ACTIVITY_HOT_COMMENTS_24H_THRESHOLD", 5),
+        review_activity_hot_points=_float_env("REVIEW_ACTIVITY_HOT_POINTS", 1.5),
+        review_activity_warm_comments_24h_threshold=_int_env("REVIEW_ACTIVITY_WARM_COMMENTS_24H_THRESHOLD", 2),
+        review_activity_warm_points=_float_env("REVIEW_ACTIVITY_WARM_POINTS", 0.75),
         review_requested_points=_float_env("REVIEW_REQUESTED_POINTS", 2.0),
         review_large_diff_points=_float_env("REVIEW_LARGE_DIFF_POINTS", 1.5),
         review_medium_diff_points=_float_env("REVIEW_MEDIUM_DIFF_POINTS", 1.0),
@@ -103,7 +115,7 @@ def load_settings() -> Settings:
             os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                 "skills",
-                "polaris-report-analysis",
+                "polaris-attention-analysis",
                 "skill.md",
             ),
         ),

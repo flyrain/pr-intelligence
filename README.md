@@ -7,7 +7,8 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 ## Key Features
 
 ### 🎯 Intelligent PR Prioritization
-- **Smart scoring rules** consider staleness (24h/72h thresholds), diff size, file count, and explicit review requests
+- **Smart scoring rules** consider short-term staleness (24h/72h), long-inactive PR downgrades, diff size, file count, and explicit review requests
+- **Activity trend tracking** highlights bursts like "5 comments in last 24h" on active PRs
 - **Configurable thresholds** let you tune what qualifies as "needs review"
 - **Target reviewer tracking**: automatically highlight PRs assigned to specific team members
 - **Deterministic scoring**: consistent prioritization across syncs
@@ -181,6 +182,8 @@ PORT=9090 ./run.sh serve
 - `ISSUE_INTERESTING_THRESHOLD` (default: `2.0`)
 - `REVIEW_STALE_24H_POINTS` (default: `1.5`)
 - `REVIEW_STALE_72H_POINTS` (default: `1.5`)
+- `REVIEW_INACTIVE_DAYS` (default: `7`; PRs with no activity past this age are downgraded)
+- `REVIEW_INACTIVE_PENALTY_POINTS` (default: `2.0`)
 - `REVIEW_REQUESTED_POINTS` (default: `2.0`)
 - `REVIEW_LARGE_DIFF_POINTS` (default: `1.5`)
 - `REVIEW_MEDIUM_DIFF_POINTS` (default: `1.0`)
@@ -225,7 +228,7 @@ The service uses **two separate skill files** for different analysis tasks:
    - Invoked via `/reviews/pr/{pr_number}/run`
    - Runs multi-turn LLM conversations with subagents for comprehensive code review
 
-2. **`skills/polaris-report-analysis/skill.md`** (post-sync report analysis)
+2. **`skills/polaris-attention-analysis/skill.md`** (post-sync report analysis)
    - Used by `DailyReportGraph` for batch analysis across top PRs
    - Invoked via `/refresh`
    - Processes multiple PRs in a single LLM call for efficiency
@@ -453,7 +456,7 @@ src/polaris_pr_intel/
 
 skills/
 ├── polaris-pr-review/        # Individual PR review skill
-└── polaris-report-analysis/  # Batch report analysis skill
+└── polaris-attention-analysis/  # Batch PR attention analysis skill
 
 tests/                         # Test suite (pytest)
 ```
