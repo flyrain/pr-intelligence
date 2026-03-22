@@ -48,7 +48,6 @@ Add these routes:
 - `GET /reviews/pr/{pr_number}/latest?repo=owner/repo`
 - `GET /reviews/pr/{pr_number}/latest.md?repo=owner/repo`
 - `GET /reviews/pr/{pr_number}/latest.html?repo=owner/repo`
-- `GET /reviews/pr/top?repo=owner/repo`
 
 ```mermaid
 flowchart LR
@@ -118,8 +117,32 @@ sqlite_path = ".data/my-org__service-a.db"
 
 ## Compatibility
 
-- if only one repo is configured, existing non-repo-scoped routes can keep working
-- if multiple repos are configured, `repo` becomes required on repo-specific routes
+- if only one repo is configured, existing non-repo-scoped API routes can keep working
+- if multiple repos are configured, `repo` is required on repo-specific routes
+- `/ui` should always become the repo index
+- `/ui?repo=owner/repo` should load the repo dashboard in both single-repo and multi-repo mode
+
+## Errors
+
+Use simple rules:
+
+- missing `repo` on a repo-specific route: `400 repo-required`
+- unknown `repo`: `404 repo-not-found`
+- in single-repo mode, non-repo-scoped API routes may continue to work as compatibility aliases
+
+## Webhooks
+
+Keep the existing webhook route:
+
+- `POST /webhooks/github`
+
+Do not require a `repo` query parameter there.
+
+Instead:
+
+- read the repo from the GitHub webhook payload
+- map it to the configured runtime using `owner/repo`
+- dispatch the event to that repo runtime
 
 ## Implementation Steps
 
