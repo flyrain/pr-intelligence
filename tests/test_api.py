@@ -11,6 +11,7 @@ from polaris_pr_intel.config import Settings
 from polaris_pr_intel.github.client import GitHubClient
 from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, IssueSignal, PRAttentionDecision, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
+from polaris_pr_intel.store.sqlite_repository import SQLiteRepository
 
 
 class _DummyEventGraph:
@@ -202,6 +203,36 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
     stats_data = stats.json()
     assert stats_data["ok"] is True
     assert stats_data["stats"]["interesting_issues_queue"] == 1
+
+
+def test_stats_endpoint_reads_pr_review_reports_with_sqlite_backend(tmp_path) -> None:
+    db_path = tmp_path / "intel.db"
+    repo = SQLiteRepository(str(db_path))
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=7,
+            provider="heuristic",
+            model="local-heuristic",
+            findings=[],
+            overall_priority=0.5,
+            overall_recommendation="Review when convenient.",
+        )
+    )
+    app = create_app(
+        repo,
+        _DummyEventGraph(),
+        _DummyDailyGraph(InMemoryRepository()),
+        pr_review_graph=_DummyPRReviewGraph(InMemoryRepository()),
+        snapshot_ingestor=_DummyIngestor(),
+        settings=Settings(github_token=""),
+    )
+
+    client = TestClient(app)
+    resp = client.get("/stats")
+
+    assert resp.status_code == 200
+    assert resp.json()["stats"]["deep_pr_reviews"] == 1
+    repo.close()
 
 
 def test_needs_review_filters_to_target_login_when_configured(monkeypatch) -> None:
