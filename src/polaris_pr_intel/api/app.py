@@ -347,7 +347,8 @@ def create_app(
         for item in _review_queue_items():
             review_rows.append(
                 f"<tr><td><a href=\"{escape(item.url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{item.number}</a></td>"
-                f"<td>{escape(item.title)}</td><td>{item.score:.1f}</td><td>{escape(', '.join(item.reasons))}</td></tr>"
+                f"<td>{escape(item.title)}</td><td>{item.score:.1f}</td><td>{escape(', '.join(item.reasons))}</td>"
+                f"<td><button class=\"action-btn\" onclick=\"runPrReview({item.number}, this)\">Review</button></td></tr>"
             )
         visible_review_rows = review_rows[:10]
         folded_review_rows = review_rows[10:]
@@ -355,7 +356,7 @@ def create_app(
             "<details class=\"folded-section\">"
             f"<summary>Show {len(folded_review_rows)} more PRs</summary>"
             "<table>"
-            "<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>"
+            "<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>"
             f"<tbody>{''.join(folded_review_rows)}</tbody>"
             "</table>"
             "</details>"
@@ -487,6 +488,7 @@ def create_app(
     h1,h2,h3 {{ font-family: inherit; font-weight: 700; margin: 0 0 12px 0; }}
     h1 {{ font-size: 22px; margin-bottom: 1px; line-height: 1.02; }}
     h2 {{ font-size: 24px; margin-top: 18px; }}
+    h3 {{ font-size: 20px; }}
     .muted {{ color: var(--muted); margin: 0; }}
     .hero-side {{
       min-width: 0;
@@ -572,7 +574,7 @@ def create_app(
     .tab-fold > summary {{
       cursor: pointer;
       font-family: inherit;
-      font-size: 24px;
+      font-size: 20px;
       font-weight: 700;
       margin-bottom: 10px;
     }}
@@ -871,6 +873,16 @@ def create_app(
     <section class="layout">
       <div>
         <article class="card">
+          <details class="queue-section">
+            <summary>PRs Needing Review ({stats["needs_review_queue"]})</summary>
+            <table>
+              <thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>
+              <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="5">No PRs queued.</td></tr>'}</tbody>
+            </table>
+            {folded_review_html}
+          </details>
+        </article>
+        <article class="card" style="margin-top: 14px;">
           <details class="tab-fold">
             <summary>New/Updated PRs Today</summary>
             <table>
@@ -890,16 +902,6 @@ def create_app(
       </div>
       <aside>
         <article class="card">
-          <details class="queue-section">
-            <summary>PRs Needing Review ({stats["needs_review_queue"]})</summary>
-            <table>
-              <thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
-              <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="4">No PRs queued.</td></tr>'}</tbody>
-            </table>
-            {folded_review_html}
-          </details>
-        </article>
-        <article class="card" style="margin-top: 14px;">
           <details class="queue-section">
             <summary>Interesting Issues ({stats["interesting_issues_queue"]})</summary>
             <table>

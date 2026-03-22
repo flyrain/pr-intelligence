@@ -576,7 +576,9 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Aging Open PRs (72h+)" in resp.text
     assert "Review" in resp.text
     assert resp.text.count("New/Updated PRs Today") >= 1
+    assert resp.text.index("<summary>PRs Needing Review") < resp.text.index("<summary>New/Updated PRs Today</summary>")
     assert resp.text.index("<summary>New/Updated PRs Today</summary>") < resp.text.index("<summary>Latest Report</summary>")
+    assert '<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>' in resp.text
 
 
 def test_ui_new_updated_prs_folds_after_first_ten() -> None:
