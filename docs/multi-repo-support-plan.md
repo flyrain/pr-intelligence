@@ -1,147 +1,26 @@
 # Multi-Repo Support Plan
 
-## Status
-
-Proposed
-
 ## Summary
 
-Support multiple GitHub repositories in one service without mixing them into one default queue.
+Keep the product repo-scoped.
 
-The recommended shape is:
+- `/ui` should be a simple repo index
+- each repo gets its own dashboard and API routes
+- do not mix PRs from different repos into one default queue
 
-- one FastAPI app
-- one isolated runtime per repo
-- `/ui` as a repo index
-- `/repos/{owner}/{repo}/ui` as the actual working dashboard
-- one SQLite file per repo in phase 1
-
-This keeps triage repo-scoped, avoids ambiguous PR numbers, and lets us reuse most of the current single-repo code.
+This is the simplest path and matches how the current app already works.
 
 ```mermaid
 flowchart TD
-    A["FastAPI App"] --> B["Repo Index (/ui)"]
-    A --> C["Repo Runtime Registry"]
-    C --> D["apache/polaris runtime"]
-    C --> E["my-org/service-a runtime"]
-    C --> F["my-org/service-b runtime"]
-    D --> D1["Repo Dashboard"]
-    E --> E1["Repo Dashboard"]
-    F --> F1["Repo Dashboard"]
-```
-
-## Key Decisions
-
-- Do not mix repos into one flat inbox by default.
-- Keep execution and storage isolated per repo.
-- Add repo-scoped routes for dashboard, queues, reports, and reviews.
-- Keep legacy repo-global routes only as aliases in single-repo mode.
-- Use a TOML config file for multi-repo mode instead of repeated env vars.
-- Defer a shared multi-tenant database until there is a real need.
-
-## Why
-
-Mixing repos creates bad defaults:
-
-- PR `#123` is ambiguous across repos.
-- queue scores are not directly comparable across repos
-- last sync and latest report stop meaning one thing
-- review history becomes noisy
-
-The right default is repo isolation first, aggregate overview second.
-
-## Runtime Shape
-
-Add a registry of per-repo runtimes. Each runtime owns:
-
-- `GitHubClient`
-- store
-- `SnapshotIngestor`
-- `EventGraph`
-- `DailyReportGraph`
-- `PRReviewGraph`
-- scheduler
-
-Suggested model:
-
-```python
-@dataclass
-class RepoRuntime:
-    ref: RepoRef
-    store: Repository
-    gh: GitHubClient
-    snapshot_ingestor: SnapshotIngestor
-    event_graph: EventGraph
-    daily_graph: DailyReportGraph
-    pr_review_graph: PRReviewGraph
-    scheduler: DailyScheduler
-```
-
-The app layer should route requests to the correct runtime by `owner/repo`.
-
-```mermaid
-flowchart TD
-    A["RepoRuntime"] --> B["GitHubClient"]
-    A --> C["Store"]
-    A --> D["SnapshotIngestor"]
-    A --> E["EventGraph"]
-    A --> F["DailyReportGraph"]
-    A --> G["PRReviewGraph"]
-    A --> H["DailyScheduler"]
-```
-
-## UI Plan
-
-### `/ui`
-
-Turn `/ui` into a repo index page.
-
-Each repo card should show:
-
-- `owner/repo`
-- PR count
-- issue count
-- needs-review count
-- interesting-issues count
-- last sync
-- next refresh
-- latest report date
-
-```mermaid
-flowchart TD
-    A["/ui"] --> B["Repo Card: apache/polaris"]
-    A --> C["Repo Card: my-org/service-a"]
+    A["/ui"] --> B["apache/polaris"]
+    A --> C["my-org/service-a"]
     B --> D["/repos/apache/polaris/ui"]
     C --> E["/repos/my-org/service-a/ui"]
 ```
 
-### `/repos/{owner}/{repo}/ui`
+## Repo-Scoped Routes
 
-Move the current dashboard here with minimal layout change.
-
-Keep the existing sections:
-
-- PRs needing review
-- new or updated PRs
-- interesting issues
-- deep PR reviews
-- review jobs
-
-### Aggregate View
-
-If we want a cross-repo view later, make it a grouped overview, not one flat queue.
-
-```mermaid
-flowchart LR
-    A["Repo Index"] --> B["Repo Dashboard"]
-    B --> C["Repo Queue"]
-    B --> D["Repo Report"]
-    B --> E["Repo Review Detail"]
-```
-
-## API Plan
-
-Add repo-scoped routes:
+Add these routes:
 
 - `GET /repos`
 - `GET /repos/{owner}/{repo}/stats`
@@ -157,24 +36,57 @@ Add repo-scoped routes:
 - `GET /repos/{owner}/{repo}/reviews/pr/{pr_number}/latest.html`
 - `GET /repos/{owner}/{repo}/reviews/pr/top`
 
-Compatibility rules:
-
-- if one repo is configured, keep current routes working as aliases
-- if multiple repos are configured, repo-global API routes should return `repo-required`
-
 ```mermaid
-flowchart TD
-    A["Request: /repos/{owner}/{repo}/..."] --> B["Validate repo exists"]
-    B --> C["Resolve RepoRuntime"]
-    C --> D["Run repo-local handler"]
-    D --> E["Return repo-scoped JSON or HTML"]
+flowchart LR
+    A["Repo Index"] --> B["Repo Dashboard"]
+    B --> C["Stats"]
+    B --> D["Queues"]
+    B --> E["Report"]
+    B --> F["PR Review"]
 ```
 
-## Config Plan
+## UI
 
-Keep current env-based config for single-repo mode.
+### `/ui`
 
-Add multi-repo mode via `PR_INTEL_REPOS_FILE`, pointing to a TOML file:
+Make `/ui` a repo list page. Each repo card should show:
+
+- `owner/repo`
+- PR count
+- issue count
+- needs-review count
+- interesting-issues count
+- last sync
+
+### `/repos/{owner}/{repo}/ui`
+
+Move the current dashboard here with minimal changes.
+
+Keep the existing sections:
+
+- PRs needing review
+- new or updated PRs
+- interesting issues
+- deep PR reviews
+- review jobs
+
+## Data And Storage
+
+Keep this simple in phase 1:
+
+- one app
+- one repo runtime per configured repo
+- one SQLite file per repo
+
+That avoids PR number collisions like `#123` appearing in multiple repos.
+
+## Config
+
+Keep single-repo env config as-is.
+
+For multi-repo mode, add one config file listing repos and per-repo paths.
+
+Example:
 
 ```toml
 [[repos]]
@@ -182,115 +94,40 @@ owner = "apache"
 repo = "polaris"
 local_review_repo_dir = "/path/to/apache/polaris"
 sqlite_path = ".data/apache__polaris.db"
-webhook_secret = ""
 
 [[repos]]
 owner = "my-org"
 repo = "service-a"
 local_review_repo_dir = "/path/to/service-a"
 sqlite_path = ".data/my-org__service-a.db"
-webhook_secret = ""
 ```
 
-Global provider settings can stay shared at first. Per-repo overrides can be added only where needed.
+## Compatibility
 
-```mermaid
-flowchart LR
-    A["PR_INTEL_REPOS_FILE"] --> B["RepoConfig[]"]
-    B --> C["RepoRuntime registry"]
-    C --> D["Runtime: apache/polaris"]
-    C --> E["Runtime: my-org/service-a"]
-```
+- if only one repo is configured, existing non-repo-scoped routes can keep working
+- if multiple repos are configured, repo-scoped routes are the source of truth
 
-## Storage Plan
+## Implementation Steps
 
-Phase 1 should use one SQLite file per repo.
+1. Add a small repo registry in the app layer.
+2. Load multiple repo configs.
+3. Create one runtime per repo.
+4. Add the repo-scoped routes listed above.
+5. Move the current dashboard to `/repos/{owner}/{repo}/ui`.
+6. Turn `/ui` into the repo index.
+7. Make review jobs repo-aware.
+8. Add tests for two repos with overlapping PR numbers.
 
-Benefits:
-
-- no PR number collisions
-- minimal store changes
-- lower migration risk
-
-Do not move to one shared multi-tenant schema in phase 1.
-
-## Webhooks And Jobs
-
-Keep one webhook endpoint:
-
-- `POST /webhooks/github`
-
-Route by `payload.repository.owner.login` and `payload.repository.name`.
-
-Review jobs must become repo-aware:
-
-- dedupe by `(repo_full_name, pr_number)`
-- include repo identity in job payloads
-
-```mermaid
-flowchart LR
-    A["GitHub Webhook or UI Request"] --> B["Resolve owner/repo"]
-    B --> C["Lookup RepoRuntime"]
-    C --> D["Repo-local store + graphs + scheduler"]
-    D --> E["Repo-scoped response"]
-```
-
-## Migration Plan
-
-### Phase 1
-
-- add `RepoRef`, `RepoConfig`, and `RepoRuntime`
-- add multi-repo config loading
-- build a runtime registry in `main.py`
-- refactor `create_app()` to dispatch by repo
-- move current dashboard to `/repos/{owner}/{repo}/ui`
-- turn `/ui` into a repo index
-- add repo-scoped API routes
-- keep one SQLite file per repo
-- make review jobs repo-aware
-
-### Phase 2
-
-- improve repo index cards and health states
-- add repo switcher navigation
-- add optional grouped aggregate views
-
-### Phase 3
-
-- only if needed, move to a shared multi-tenant store
-
-```mermaid
-flowchart LR
-    A["Phase 1\nIsolated runtimes"] --> B["Phase 2\nBetter repo index and grouped overview"]
-    B --> C["Phase 3\nOptional shared storage"]
-```
-
-## Code Touch Points
-
-Expected files:
-
-- `src/polaris_pr_intel/config.py`
-- `src/polaris_pr_intel/main.py`
-- `src/polaris_pr_intel/api/app.py`
-- `src/polaris_pr_intel/models.py`
-- `src/polaris_pr_intel/scheduler/daily.py`
-
-Likely new files:
-
-- `src/polaris_pr_intel/runtime.py`
-- `src/polaris_pr_intel/config_multi.py`
-
-## Testing
+## Tests
 
 Cover at least:
 
-- two repos with overlapping PR numbers
-- repo-scoped queue and review routes
-- single-repo compatibility routes
-- `/ui` repo index rendering
-- webhook dispatch to the right runtime
-- review-job dedup by repo plus PR number
+- two repos both having PR `#123`
+- repo-scoped queue routes
+- repo-scoped review routes
+- repo index rendering
+- single-repo compatibility behavior
 
 ## Recommendation
 
-Implement isolated per-repo runtimes first. It matches the current architecture, keeps the UI understandable, and avoids the product mistake of making review triage a mixed cross-repo queue.
+Do this first. It is much simpler than building a mixed cross-repo queue and it fits the current architecture.
