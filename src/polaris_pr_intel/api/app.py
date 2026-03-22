@@ -724,10 +724,24 @@ def create_app(
     .hero-spacer {{
       min-width: 0;
     }}
+    .hero-heading {{
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }}
+    .brand-logo {{
+      width: 56px;
+      height: 56px;
+      object-fit: contain;
+      flex: 0 0 auto;
+    }}
     .brand-copy h1 {{
+      margin: 0;
       white-space: nowrap;
     }}
     .brand-copy .muted {{
+      margin-top: 6px;
       white-space: nowrap;
     }}
     @media (max-width: 960px) {{
@@ -819,6 +833,7 @@ def create_app(
 	    <section class="hero">
 	      <div class="hero-top">
           <div class="hero-heading">
+            <img class="brand-logo" src="/docs-static/orca.png" alt="Orca logo" />
             <div class="brand-copy">
 	          <h1>PR Intelligence</h1>
 	          <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
