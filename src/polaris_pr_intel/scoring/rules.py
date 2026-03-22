@@ -23,6 +23,16 @@ def score_review_need(pr: PullRequestSnapshot, settings: Settings) -> tuple[floa
     if age_hours > 72:
         score += settings.review_stale_72h_points
         reasons.append("stale-over-72h")
+    if age_hours >= settings.review_inactive_days * 24:
+        score -= settings.review_inactive_penalty_points
+        reasons.append(f"inactive-over-{settings.review_inactive_days}d")
+
+    if pr.activity_comments_24h >= settings.review_activity_hot_comments_24h_threshold:
+        score += settings.review_activity_hot_points
+        reasons.append("hot-activity-24h")
+    elif pr.activity_comments_24h >= settings.review_activity_warm_comments_24h_threshold:
+        score += settings.review_activity_warm_points
+        reasons.append("active-discussion-24h")
 
     if pr.requested_reviewers:
         score += settings.review_requested_points

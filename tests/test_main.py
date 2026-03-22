@@ -71,7 +71,7 @@ def test_default_review_and_analysis_skill_paths_are_distinct(monkeypatch) -> No
 
     assert settings.review_skill_file != settings.analysis_skill_file
     assert settings.review_skill_file.endswith("skills/polaris-pr-review/skill.md")
-    assert settings.analysis_skill_file.endswith("skills/polaris-report-analysis/skill.md")
+    assert settings.analysis_skill_file.endswith("skills/polaris-attention-analysis/skill.md")
 
 
 def test_self_review_defaults_enabled(monkeypatch) -> None:

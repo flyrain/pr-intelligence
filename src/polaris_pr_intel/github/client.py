@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -33,9 +33,41 @@ class GitHubClient:
     def get_pull_request(self, number: int, include_diff: bool = False) -> PullRequestSnapshot:
         data = self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")
         pr = self._to_pr_snapshot(data)
+        activity = self.get_pull_request_activity_metrics(number)
+        pr.activity_comments_24h = activity["comments_24h"]
+        pr.activity_comments_7d = activity["comments_7d"]
+        pr.activity_reviews_24h = activity["reviews_24h"]
+        pr.activity_reviews_7d = activity["reviews_7d"]
         if include_diff:
             pr.diff_text = self.get_pull_request_diff(number)
         return pr
+
+    def get_pull_request_activity_metrics(self, number: int) -> dict[str, int]:
+        now = datetime.now(timezone.utc)
+        since_24h = now - timedelta(hours=24)
+        since_7d = now - timedelta(days=7)
+        issue_comments_24h, issue_comments_7d = self._count_recent_items(
+            f"/repos/{self.owner}/{self.repo}/issues/{number}/comments",
+            since_cutoffs=[since_24h, since_7d],
+            timestamp_key="created_at",
+        )
+        review_comments_24h, review_comments_7d = self._count_recent_items(
+            f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments",
+            since_cutoffs=[since_24h, since_7d],
+            timestamp_key="created_at",
+        )
+        reviews_24h, reviews_7d = self._count_recent_items(
+            f"/repos/{self.owner}/{self.repo}/pulls/{number}/reviews",
+            since_cutoffs=[since_24h, since_7d],
+            timestamp_key="submitted_at",
+            require_body=True,
+        )
+        return {
+            "comments_24h": issue_comments_24h + review_comments_24h,
+            "comments_7d": issue_comments_7d + review_comments_7d,
+            "reviews_24h": reviews_24h,
+            "reviews_7d": reviews_7d,
+        }
 
     def get_pull_request_diff(self, number: int, max_chars: int = 120_000) -> str:
         """Fetch the combined patch for all files in a PR."""
@@ -74,6 +106,35 @@ class GitHubClient:
         )
         issues = [i for i in data if "pull_request" not in i]
         return [self._to_issue_snapshot(issue) for issue in issues]
+
+    def _count_recent_items(
+        self,
+        path: str,
+        *,
+        since_cutoffs: list[datetime],
+        timestamp_key: str,
+        require_body: bool = False,
+    ) -> tuple[int, ...]:
+        counts = [0 for _ in since_cutoffs]
+        page = 1
+        while True:
+            data = self._get(path, params={"per_page": 100, "page": page})
+            if not data:
+                break
+            for item in data:
+                timestamp = item.get(timestamp_key)
+                if not timestamp:
+                    continue
+                created_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                if require_body and not (item.get("body") or "").strip():
+                    continue
+                for index, cutoff in enumerate(since_cutoffs):
+                    if created_at >= cutoff:
+                        counts[index] += 1
+            if len(data) < 100:
+                break
+            page += 1
+        return tuple(counts)
 
     @staticmethod
     def _to_pr_snapshot(pr: dict[str, Any]) -> PullRequestSnapshot:

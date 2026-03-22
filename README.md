@@ -7,7 +7,8 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 ## Key Features
 
 ### 🎯 Intelligent PR Prioritization
-- **Smart scoring rules** consider staleness (24h/72h thresholds), diff size, file count, and explicit review requests
+- **Smart scoring rules** consider short-term staleness (24h/72h), long-inactive PR downgrades, diff size, file count, and explicit review requests
+- **Activity trend tracking** highlights bursts like "5 comments in last 24h" on active PRs
 - **Configurable thresholds** let you tune what qualifies as "needs review"
 - **Target reviewer tracking**: automatically highlight PRs assigned to specific team members
 - **Deterministic scoring**: consistent prioritization across syncs
@@ -165,6 +166,10 @@ PORT=9090 ./run.sh serve
 - `REVIEW_SKILL_FILE` (optional; skill used by individual PR review prompts)
 - `ANALYSIS_SKILL_FILE` (optional; skill used by post-sync report-analysis prompts)
 
+Current limitation:
+- attention ranking via `ANALYSIS_SKILL_FILE` is LLM-backed only for `claude_code_local` and `codex_local`
+- `openai`, `gemini`, and `anthropic` currently fall back to heuristic attention ranking for the batch queue path
+
 ### Local Claude Code provider
 - `CLAUDE_CODE_CMD` (default: `claude`)
 - `CLAUDE_CODE_TIMEOUT_SEC` (default: `300`)
@@ -177,10 +182,16 @@ PORT=9090 ./run.sh serve
 
 ### Scoring knobs
 - `REVIEW_NEEDED_THRESHOLD` (default: `2.0`)
-- `REVIEW_TARGET_LOGIN` (optional; if this login is in `requested_reviewers`, PR is always included in "PRs Needing Review")
+- `REVIEW_TARGET_LOGIN` (optional; used as a reviewer-specific signal in analysis and reporting. It no longer filters `GET /queues/needs-review`, which is now a repo-wide prioritized queue sourced from persisted attention analysis.)
 - `ISSUE_INTERESTING_THRESHOLD` (default: `2.0`)
 - `REVIEW_STALE_24H_POINTS` (default: `1.5`)
 - `REVIEW_STALE_72H_POINTS` (default: `1.5`)
+- `REVIEW_INACTIVE_DAYS` (default: `7`; PRs with no activity past this age are downgraded)
+- `REVIEW_INACTIVE_PENALTY_POINTS` (default: `2.0`)
+- `REVIEW_ACTIVITY_HOT_COMMENTS_24H_THRESHOLD` (default: `5`)
+- `REVIEW_ACTIVITY_HOT_POINTS` (default: `1.5`)
+- `REVIEW_ACTIVITY_WARM_COMMENTS_24H_THRESHOLD` (default: `2`)
+- `REVIEW_ACTIVITY_WARM_POINTS` (default: `0.75`)
 - `REVIEW_REQUESTED_POINTS` (default: `2.0`)
 - `REVIEW_LARGE_DIFF_POINTS` (default: `1.5`)
 - `REVIEW_MEDIUM_DIFF_POINTS` (default: `1.0`)
@@ -205,7 +216,7 @@ PORT=9090 ./run.sh serve
 - `GET /reviews/pr/top` - Top-rated reviews
 
 ### Queues
-- `GET /queues/needs-review` - PRs needing review (prioritized)
+- `GET /queues/needs-review` - PRs needing review (repo-wide prioritized queue from the latest persisted attention analysis run; not filtered by `REVIEW_TARGET_LOGIN`)
 - `GET /queues/interesting-issues` - Interesting issues (prioritized)
 
 ### Other
@@ -225,8 +236,8 @@ The service uses **two separate skill files** for different analysis tasks:
    - Invoked via `/reviews/pr/{pr_number}/run`
    - Runs multi-turn LLM conversations with subagents for comprehensive code review
 
-2. **`skills/polaris-report-analysis/skill.md`** (post-sync report analysis)
-   - Used by `DailyReportGraph` for batch analysis across top PRs
+2. **`skills/polaris-attention-analysis/skill.md`** (post-sync report analysis)
+   - Used by `DailyReportGraph` for batch analysis across all open PRs
    - Invoked via `/refresh`
    - Processes multiple PRs in a single LLM call for efficiency
    - Generates derived analysis artifacts and attention-oriented reports
@@ -453,7 +464,7 @@ src/polaris_pr_intel/
 
 skills/
 ├── polaris-pr-review/        # Individual PR review skill
-└── polaris-report-analysis/  # Batch report analysis skill
+└── polaris-attention-analysis/  # Batch PR attention analysis skill
 
 tests/                         # Test suite (pytest)
 ```

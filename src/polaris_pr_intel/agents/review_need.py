@@ -17,6 +17,8 @@ class ReviewNeedAgent:
             requested_you = any((r or "").strip().lower() == target_login for r in pr.requested_reviewers)
             if requested_you and "requested-you" not in reasons:
                 reasons.append("requested-you")
+        if pr.activity_comments_24h > 0:
+            reasons.append(f"comments-24h:{pr.activity_comments_24h}")
         return ReviewSignal(
             pr_number=pr.number,
             score=score,

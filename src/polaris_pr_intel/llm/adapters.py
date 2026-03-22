@@ -10,13 +10,78 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from polaris_pr_intel.models import PRSubagentFinding, PullRequestSnapshot
+from polaris_pr_intel.models import PRAttentionContext, PRAttentionDecision, PRSubagentFinding, PullRequestSnapshot
 
 logger = logging.getLogger(__name__)
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _build_attention_batch_prompt(skill_prompt: str, contexts: list[PRAttentionContext]) -> str:
+    sections: list[str] = []
+    for ctx in contexts:
+        sections.append(
+            f"""PR #{ctx.pr_number}
+- title: {ctx.title}
+- author: {ctx.author}
+- state: {ctx.state}
+- draft: {ctx.draft}
+- labels: {", ".join(ctx.labels) if ctx.labels else "(none)"}
+- requested_reviewers: {", ".join(ctx.requested_reviewers) if ctx.requested_reviewers else "(none)"}
+- updated_at: {ctx.updated_at.isoformat()}
+- age_hours: {ctx.age_hours:.1f}
+- inactive_days: {ctx.inactive_days:.1f}
+- comments_total: {ctx.comments_total}
+- review_comments_total: {ctx.review_comments_total}
+- comments_24h: {ctx.comments_24h}
+- comments_7d: {ctx.comments_7d}
+- reviews_24h: {ctx.reviews_24h}
+- reviews_7d: {ctx.reviews_7d}
+- commits: {ctx.commits}
+- changed_files: {ctx.changed_files}
+- additions: {ctx.additions}
+- deletions: {ctx.deletions}
+- diff_size: {ctx.diff_size}
+- has_prior_review_activity: {ctx.has_prior_review_activity}
+- has_prior_deep_review: {ctx.has_prior_deep_review}
+- heuristic_signals: {", ".join(ctx.rule_reasons) if ctx.rule_reasons else "(none)"}
+
+Summary:
+{ctx.body[:1200]}"""
+        )
+    intro = skill_prompt + "\n\n" if skill_prompt else ""
+    return intro + """You are ranking pull requests for attention after sync.
+
+This is a batch prioritization task across the full PR set. Compare PRs to each other and decide what deserves attention now.
+
+Return ONLY valid JSON in this shape:
+{
+  "decisions": {
+    "<pr_number>": {
+      "needs_review": true,
+      "priority_score": 0.0-10.0,
+      "priority_band": "high|medium|low|defer",
+      "priority_reason": "1-2 short operational sentences",
+      "defer_reason": "optional short defer reason",
+      "tags": ["optional-short-tag"],
+      "suggested_catalogs": ["needs-review|aging-prs|security-risk|release-risk|recently-updated"],
+      "confidence": 0.0-1.0
+    }
+  }
+}
+
+Guidance:
+- Rank PRs relative to each other, not independently.
+- Recent discussion and active review threads are strong attention signals.
+- Long inactivity is usually a reason to defer, unless the PR is clearly high risk or blocking.
+- Use `needs-review` for PRs that should be in the active review queue.
+- Use `aging-prs` for stale PRs that need a nudge more than immediate review.
+- Keep reasons short and concrete.
+
+Pull requests:
+""" + "\n\n".join(sections)
 
 
 def _log_cli_invocation(provider: str, cmd: list[str], prompt: str) -> None:
@@ -139,6 +204,68 @@ class HeuristicLLMAdapter:
 
     def analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]) -> dict[int, PRSubagentFinding]:
         return {pr.number: self.analyze_catalog_routing(pr) for pr in prs}
+
+    def analyze_attention_batch(self, contexts: list[PRAttentionContext]) -> dict[int, PRAttentionDecision]:
+        decisions: dict[int, PRAttentionDecision] = {}
+        for ctx in contexts:
+            score = 3.0
+            tags: list[str] = []
+            catalogs: list[str] = []
+            if ctx.comments_24h >= 5 or ctx.reviews_24h >= 2:
+                score += 3.0
+                tags.append("active-discussion")
+                catalogs.extend(["needs-review", "recently-updated"])
+            elif ctx.comments_24h >= 2:
+                score += 1.5
+                tags.append("warm-discussion")
+                catalogs.append("needs-review")
+            if ctx.inactive_days >= 7:
+                score -= 2.5
+                tags.append("inactive")
+                catalogs.append("aging-prs")
+            if ctx.requested_reviewers:
+                score += 2.0
+                tags.append("review-requested")
+                catalogs.append("needs-review")
+            if ctx.diff_size >= 500 or ctx.changed_files >= 20:
+                score += 1.5
+                tags.append("release-risk")
+                catalogs.append("release-risk")
+            text = f"{ctx.title}\n{ctx.body}".lower()
+            if "security" in text or "permission" in text or "security" in {label.lower() for label in ctx.labels}:
+                score += 1.5
+                tags.append("security-risk")
+                catalogs.append("security-risk")
+            score = _clamp(score, 0.0, 10.0)
+            needs_review = "needs-review" in catalogs or score >= 5.0
+            if ctx.inactive_days >= 7 and score < 5.0:
+                band = "defer"
+                reason = "Inactive for a while and no stronger competing urgency signals."
+                defer_reason = f"Inactive for {ctx.inactive_days:.1f} days."
+            elif score >= 8.0:
+                band = "high"
+                reason = "High attention candidate due to active discussion or elevated review risk."
+                defer_reason = ""
+            elif score >= 5.0:
+                band = "medium"
+                reason = "Worth review soon based on current activity and change scope."
+                defer_reason = ""
+            else:
+                band = "low"
+                reason = "Lower urgency relative to the rest of the current PR queue."
+                defer_reason = ""
+            decisions[ctx.pr_number] = PRAttentionDecision(
+                pr_number=ctx.pr_number,
+                needs_review=needs_review,
+                priority_score=score,
+                priority_band=band,
+                priority_reason=reason,
+                defer_reason=defer_reason,
+                tags=list(dict.fromkeys(tags)),
+                suggested_catalogs=list(dict.fromkeys(catalogs)),
+                confidence=0.55,
+            )
+        return decisions
 
 
 @dataclass
@@ -697,6 +824,38 @@ Respond with ONLY valid JSON:
                     "claude-code-local authentication failed. Run `claude auth login` (or `claude setup-token`) and retry."
                 ) from exc
             return super().analyze_catalog_routing_batch(prs)
+
+    def analyze_attention_batch(self, contexts: list[PRAttentionContext]) -> dict[int, PRAttentionDecision]:
+        if not contexts:
+            return {}
+        prompt = _build_attention_batch_prompt(self._load_skill_prompt(self.analysis_skill_file), contexts)
+        try:
+            payload = self._run_raw_prompt(prompt)
+            raw_decisions = payload.get("decisions") if isinstance(payload, dict) else None
+            if not isinstance(raw_decisions, dict):
+                raise ValueError("Missing decisions object in batch result")
+            decisions: dict[int, PRAttentionDecision] = {}
+            for ctx in contexts:
+                raw = raw_decisions.get(str(ctx.pr_number))
+                if not isinstance(raw, dict):
+                    continue
+                raw["pr_number"] = ctx.pr_number
+                decision = PRAttentionDecision.model_validate(raw)
+                decision.priority_score = _clamp(decision.priority_score, 0.0, 10.0)
+                decision.confidence = _clamp(decision.confidence, 0.0, 1.0)
+                decisions[ctx.pr_number] = decision
+            return decisions
+        except Exception as exc:
+            detail = str(exc)
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip().replace("\n", " ")
+                stdout = (exc.stdout or "").strip().replace("\n", " ")
+                detail = stderr or stdout or detail
+            if "Failed to authenticate" in detail or "API Error: 401" in detail or "Not logged in" in detail:
+                raise RuntimeError(
+                    "claude-code-local authentication failed. Run `claude auth login` (or `claude setup-token`) and retry."
+                ) from exc
+            return super().analyze_attention_batch(contexts)
 
     def _build_catalog_batch_prompt(self, prs: list[PullRequestSnapshot]) -> str:
         analysis_skill_prompt = self._load_skill_prompt(self.analysis_skill_file)
@@ -1257,6 +1416,29 @@ Respond with ONLY valid JSON:
             return results
         except Exception:
             return super().analyze_catalog_routing_batch(prs)
+
+    def analyze_attention_batch(self, contexts: list[PRAttentionContext]) -> dict[int, PRAttentionDecision]:
+        if not contexts:
+            return {}
+        prompt = _build_attention_batch_prompt(self._load_skill_prompt(self.analysis_skill_file), contexts)
+        try:
+            payload = self._run_raw_prompt(prompt)
+            raw_decisions = payload.get("decisions") if isinstance(payload, dict) else None
+            if not isinstance(raw_decisions, dict):
+                raise ValueError("Missing decisions object in batch result")
+            decisions: dict[int, PRAttentionDecision] = {}
+            for ctx in contexts:
+                raw = raw_decisions.get(str(ctx.pr_number))
+                if not isinstance(raw, dict):
+                    continue
+                raw["pr_number"] = ctx.pr_number
+                decision = PRAttentionDecision.model_validate(raw)
+                decision.priority_score = _clamp(decision.priority_score, 0.0, 10.0)
+                decision.confidence = _clamp(decision.confidence, 0.0, 1.0)
+                decisions[ctx.pr_number] = decision
+            return decisions
+        except Exception:
+            return super().analyze_attention_batch(contexts)
 
     def _build_catalog_batch_prompt(self, prs: list[PullRequestSnapshot]) -> str:
         skill_prompt = self._load_skill_prompt(self.analysis_skill_file)

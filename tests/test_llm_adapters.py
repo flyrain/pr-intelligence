@@ -170,7 +170,7 @@ def test_codex_local_adapter_catalog_prompt_mentions_routing() -> None:
 def test_codex_local_adapter_includes_shared_skill_prompt(tmp_path) -> None:
     analysis_skill_file = tmp_path / "analysis-skill.md"
     analysis_skill_file.write_text(
-        "---\nname: polaris-report-analysis\ndescription: x\n---\nUse recent-change routing rules.\n",
+        "---\nname: polaris-attention-analysis\ndescription: x\n---\nUse recent-change routing rules.\n",
         encoding="utf-8",
     )
     adapter = CodexLocalAdapter(command="codex", analysis_skill_file=str(analysis_skill_file))
@@ -196,7 +196,7 @@ def test_codex_local_adapter_uses_review_skill_only_for_review_prompt(tmp_path) 
 def test_claude_code_local_adapter_uses_analysis_skill_only_for_catalog_prompt(tmp_path) -> None:
     analysis_skill_file = tmp_path / "analysis-skill.md"
     analysis_skill_file.write_text(
-        "---\nname: polaris-report-analysis\ndescription: x\n---\nAnalysis-only guidance.\n",
+        "---\nname: polaris-attention-analysis\ndescription: x\n---\nAnalysis-only guidance.\n",
         encoding="utf-8",
     )
     adapter = ClaudeCodeLocalAdapter(command="claude", analysis_skill_file=str(analysis_skill_file))

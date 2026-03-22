@@ -61,6 +61,10 @@ class EventGraph:
                     "changed_files": payload["pull_request"].get("changed_files", 0),
                     "additions": payload["pull_request"].get("additions", 0),
                     "deletions": payload["pull_request"].get("deletions", 0),
+                    "activity_comments_24h": 0,
+                    "activity_comments_7d": 0,
+                    "activity_reviews_24h": 0,
+                    "activity_reviews_7d": 0,
                     "html_url": payload["pull_request"].get("html_url", ""),
                     "updated_at": payload["pull_request"]["updated_at"],
                 }

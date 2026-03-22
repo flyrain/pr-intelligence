@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 
 from fastapi.testclient import TestClient
 
 from polaris_pr_intel.api.app import create_app
 from polaris_pr_intel.config import Settings
-from polaris_pr_intel.models import AnalysisItem, AnalysisRun, DailyReport, GitHubEvent, IssueSignal, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
+from polaris_pr_intel.github.client import GitHubClient
+from polaris_pr_intel.models import AnalysisItem, AnalysisRun, DailyReport, GitHubEvent, IssueSignal, PRAttentionDecision, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
 
 
@@ -21,10 +22,29 @@ class _DummyDailyGraph:
         self.repo = repo
 
     def invoke(self) -> dict:
-        needs_review = sum(1 for signal in self.repo.review_signals.values() if signal.needs_review)
+        decisions: list[PRAttentionDecision] = []
+        for signal in self.repo.review_signals.values():
+            pr = self.repo.prs.get(signal.pr_number)
+            if pr is None or pr.state != "open":
+                continue
+            decisions.append(
+                PRAttentionDecision(
+                    pr_number=pr.number,
+                    needs_review=signal.needs_review,
+                    priority_score=signal.score,
+                    priority_band="high" if signal.score >= 5 else "medium" if signal.score >= 2 else "low",
+                    priority_reason=", ".join(signal.reasons) if signal.reasons else "needs review",
+                    tags=list(signal.reasons),
+                    suggested_catalogs=["needs-review"] if signal.needs_review else [],
+                    confidence=0.5,
+                )
+            )
+        decisions.sort(key=lambda item: item.priority_score, reverse=True)
+        needs_review = sum(1 for decision in decisions if decision.needs_review)
         run = AnalysisRun(
             artifacts=[ReportArtifact(name="executive-summary", title="Executive Summary", markdown="# Executive Summary\n\n- ok")],
             catalog_counts={"needs-review": needs_review},
+            attention_decisions=decisions,
         )
         report = DailyReport(date="2026-03-10", markdown="# Executive Summary\n\n- ok")
         self.repo.save_analysis_run(run)
@@ -126,6 +146,7 @@ def test_github_webhook_deduplicates_delivery_id() -> None:
 
 def test_root_and_stats_endpoints_return_useful_summary() -> None:
     client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
     repo.upsert_pr(
         PullRequestSnapshot(
             number=1,
@@ -143,10 +164,25 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
             additions=1,
             deletions=1,
             html_url="https://example.com/pr/1",
-            updated_at=datetime.now(timezone.utc),
+            updated_at=now,
         )
     )
-    repo.save_review_signal(ReviewSignal(pr_number=1, score=3.0, reasons=["reviewers-requested"], needs_review=True))
+    repo.save_analysis_run(
+        AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=1,
+                    needs_review=True,
+                    priority_score=3.0,
+                    priority_band="medium",
+                    priority_reason="reviewers-requested",
+                    tags=["reviewers-requested"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.6,
+                )
+            ]
+        )
+    )
     repo.save_issue_signal(IssueSignal(issue_number=2, score=2.5, reasons=["label:bug"], interesting=True))
     repo.save_daily_report(DailyReport(date="2026-03-10", markdown="report"))
 
@@ -210,16 +246,121 @@ def test_needs_review_filters_to_target_login_when_configured(monkeypatch) -> No
             updated_at=now,
         )
     )
-    repo.save_review_signal(ReviewSignal(pr_number=1, score=3.0, reasons=["requested-you"], needs_review=True))
-    repo.save_review_signal(ReviewSignal(pr_number=2, score=3.0, reasons=["reviewers-requested"], needs_review=True))
+    repo.save_analysis_run(
+        AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=1,
+                    needs_review=True,
+                    priority_score=3.0,
+                    priority_band="medium",
+                    priority_reason="requested-you",
+                    tags=["requested-you"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.6,
+                ),
+                PRAttentionDecision(
+                    pr_number=2,
+                    needs_review=True,
+                    priority_score=3.0,
+                    priority_band="medium",
+                    priority_reason="reviewers-requested",
+                    tags=["reviewers-requested"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.6,
+                ),
+            ]
+        )
+    )
 
     queued = client.get("/queues/needs-review")
     assert queued.status_code == 200
     data = queued.json()
-    assert [item["number"] for item in data] == [1]
+    assert [item["number"] for item in data] == [1, 2]
 
     stats = client.get("/stats").json()
-    assert stats["stats"]["needs_review_queue"] == 1
+    assert stats["stats"]["needs_review_queue"] == 2
+
+
+def test_needs_review_prefers_persisted_analysis_run_ordering() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    for number, title in ((11, "Lower"), (12, "Higher")):
+        repo.upsert_pr(
+            PullRequestSnapshot(
+                number=number,
+                title=title,
+                body="",
+                state="open",
+                draft=False,
+                author="x",
+                labels=[],
+                requested_reviewers=[],
+                comments=0,
+                review_comments=0,
+                commits=1,
+                changed_files=1,
+                additions=1,
+                deletions=1,
+                html_url=f"https://example.com/pr/{number}",
+                updated_at=now,
+            )
+        )
+    repo.save_review_signal(ReviewSignal(pr_number=11, score=5.0, reasons=["reviewers-requested"], needs_review=True))
+    repo.save_review_signal(ReviewSignal(pr_number=12, score=3.0, reasons=["reviewers-requested"], needs_review=True))
+    repo.save_analysis_run(
+        AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=12,
+                    needs_review=True,
+                    priority_score=9.0,
+                    priority_band="high",
+                    priority_reason="hot queue",
+                    tags=["hot-activity-24h", "comments-24h:5"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.7,
+                ),
+                PRAttentionDecision(
+                    pr_number=11,
+                    needs_review=True,
+                    priority_score=1.0,
+                    priority_band="defer",
+                    priority_reason="inactive",
+                    tags=["inactive-over-7d"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.7,
+                ),
+            ],
+            items=[
+                AnalysisItem(
+                    item_type="pr",
+                    number=12,
+                    title="Higher",
+                    url="https://example.com/pr/12",
+                    score=9.0,
+                    heuristic_reasons=["hot-activity-24h", "comments-24h:5"],
+                    catalogs=["needs-review"],
+                    updated_at=now,
+                ),
+                AnalysisItem(
+                    item_type="pr",
+                    number=11,
+                    title="Lower",
+                    url="https://example.com/pr/11",
+                    score=1.0,
+                    heuristic_reasons=["inactive-over-7d"],
+                    catalogs=["needs-review"],
+                    updated_at=now,
+                ),
+            ]
+        )
+    )
+
+    queued = client.get("/queues/needs-review")
+
+    assert queued.status_code == 200
+    assert [item["number"] for item in queued.json()] == [12, 11]
 
 
 def test_needs_review_excludes_closed_prs() -> None:
@@ -245,7 +386,22 @@ def test_needs_review_excludes_closed_prs() -> None:
             updated_at=now,
         )
     )
-    repo.save_review_signal(ReviewSignal(pr_number=10, score=5.0, reasons=["requested-you"], needs_review=True))
+    repo.save_analysis_run(
+        AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=10,
+                    needs_review=True,
+                    priority_score=5.0,
+                    priority_band="high",
+                    priority_reason="requested-you",
+                    tags=["requested-you"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.7,
+                )
+            ]
+        )
+    )
 
     queued = client.get("/queues/needs-review")
     assert queued.status_code == 200
@@ -420,7 +576,9 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Aging Open PRs (72h+)" in resp.text
     assert "Review" in resp.text
     assert resp.text.count("New/Updated PRs Today") >= 1
+    assert resp.text.index("<summary>PRs Needing Review") < resp.text.index("<summary>New/Updated PRs Today</summary>")
     assert resp.text.index("<summary>New/Updated PRs Today</summary>") < resp.text.index("<summary>Latest Report</summary>")
+    assert '<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>' in resp.text
 
 
 def test_ui_new_updated_prs_folds_after_first_ten() -> None:
@@ -577,6 +735,7 @@ def test_ui_deep_reviews_ordered_by_review_time_desc() -> None:
 def test_ui_needs_review_folds_after_first_ten() -> None:
     client, repo, _, _ = _client()
     now = datetime.now(timezone.utc)
+    decisions: list[PRAttentionDecision] = []
     for pr_number in range(200, 212):
         repo.upsert_pr(
             PullRequestSnapshot(
@@ -598,14 +757,19 @@ def test_ui_needs_review_folds_after_first_ten() -> None:
                 updated_at=now,
             )
         )
-        repo.save_review_signal(
-            ReviewSignal(
+        decisions.append(
+            PRAttentionDecision(
                 pr_number=pr_number,
-                score=10.0 - ((pr_number - 200) * 0.1),
-                reasons=["reviewers-requested"],
                 needs_review=True,
+                priority_score=10.0 - ((pr_number - 200) * 0.1),
+                priority_band="high",
+                priority_reason="reviewers-requested",
+                tags=["reviewers-requested"],
+                suggested_catalogs=["needs-review"],
+                confidence=0.6,
             )
         )
+    repo.save_analysis_run(AnalysisRun(attention_decisions=decisions))
 
     resp = client.get("/ui")
     assert resp.status_code == 200
@@ -701,6 +865,109 @@ def test_pr_review_async_job_mode() -> None:
     assert ui.status_code == 200
     assert "Review Jobs" in ui.text
     assert job_id in ui.text
+
+
+def test_activity_metrics_keep_comments_and_reviews_separate() -> None:
+    now = datetime.now(timezone.utc)
+    hour_ago = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    two_days_ago = (now - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    four_days_ago = (now - timedelta(days=4)).isoformat().replace("+00:00", "Z")
+
+    class _FakeGitHubClient(GitHubClient):
+        def __init__(self) -> None:
+            pass
+
+        owner = "x"
+        repo = "y"
+
+        def _get(self, path: str, params=None):
+            if path.endswith("/pulls/77"):
+                return {
+                    "number": 77,
+                    "title": "Test PR",
+                    "body": "",
+                    "state": "open",
+                    "draft": False,
+                    "user": {"login": "alice"},
+                    "labels": [],
+                    "requested_reviewers": [],
+                    "comments": 0,
+                    "review_comments": 0,
+                    "commits": 1,
+                    "changed_files": 1,
+                    "additions": 1,
+                    "deletions": 1,
+                    "html_url": "https://example.com/pr/77",
+                    "updated_at": "2026-03-10T00:00:00Z",
+                }
+            if path.endswith("/issues/77/comments"):
+                return [
+                    {"created_at": hour_ago},
+                    {"created_at": two_days_ago},
+                ]
+            if path.endswith("/pulls/77/comments"):
+                return [{"created_at": hour_ago}]
+            if path.endswith("/pulls/77/reviews"):
+                return [
+                    {"submitted_at": hour_ago, "body": "looks good"},
+                    {"submitted_at": four_days_ago, "body": "older"},
+                ]
+            return []
+
+    pr = _FakeGitHubClient().get_pull_request(77)
+
+    assert pr.activity_comments_24h == 2
+    assert pr.activity_comments_7d == 3
+    assert pr.activity_reviews_24h == 1
+    assert pr.activity_reviews_7d == 2
+
+
+def test_activity_metrics_scan_all_pages_when_api_order_is_oldest_first() -> None:
+    now = datetime.now(timezone.utc)
+    hour_ago = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    ten_days_ago = (now - timedelta(days=10)).isoformat().replace("+00:00", "Z")
+
+    class _FakeGitHubClient(GitHubClient):
+        def __init__(self) -> None:
+            pass
+
+        owner = "x"
+        repo = "y"
+
+        def _get(self, path: str, params=None):
+            page = (params or {}).get("page", 1)
+            if path.endswith("/pulls/77"):
+                return {
+                    "number": 77,
+                    "title": "Test PR",
+                    "body": "",
+                    "state": "open",
+                    "draft": False,
+                    "user": {"login": "alice"},
+                    "labels": [],
+                    "requested_reviewers": [],
+                    "comments": 0,
+                    "review_comments": 0,
+                    "commits": 1,
+                    "changed_files": 1,
+                    "additions": 1,
+                    "deletions": 1,
+                    "html_url": "https://example.com/pr/77",
+                    "updated_at": hour_ago,
+                }
+            if path.endswith("/issues/77/comments"):
+                if page == 1:
+                    return [{"created_at": ten_days_ago}] * 100
+                if page == 2:
+                    return [{"created_at": hour_ago}]
+            if path.endswith("/pulls/77/comments") or path.endswith("/pulls/77/reviews"):
+                return []
+            return []
+
+    pr = _FakeGitHubClient().get_pull_request(77)
+
+    assert pr.activity_comments_24h == 1
+    assert pr.activity_comments_7d == 1
 
 
 def test_pr_review_async_deduplicates_same_pr_when_job_inflight(monkeypatch) -> None:

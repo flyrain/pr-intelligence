@@ -29,6 +29,10 @@ class PullRequestSnapshot(BaseModel):
     changed_files: int = 0
     additions: int = 0
     deletions: int = 0
+    activity_comments_24h: int = 0
+    activity_comments_7d: int = 0
+    activity_reviews_24h: int = 0
+    activity_reviews_7d: int = 0
     diff_text: str = ""
     html_url: str
     updated_at: datetime
@@ -103,6 +107,47 @@ class AnalysisItem(BaseModel):
     analysis_version: str = "v1"
 
 
+class PRAttentionContext(BaseModel):
+    pr_number: int
+    title: str
+    body: str = ""
+    html_url: str
+    author: str
+    state: str
+    draft: bool
+    labels: list[str] = Field(default_factory=list)
+    requested_reviewers: list[str] = Field(default_factory=list)
+    updated_at: datetime
+    age_hours: float = 0.0
+    inactive_days: float = 0.0
+    comments_total: int = 0
+    review_comments_total: int = 0
+    comments_24h: int = 0
+    comments_7d: int = 0
+    reviews_24h: int = 0
+    reviews_7d: int = 0
+    commits: int = 0
+    changed_files: int = 0
+    additions: int = 0
+    deletions: int = 0
+    diff_size: int = 0
+    has_prior_review_activity: bool = False
+    has_prior_deep_review: bool = False
+    rule_reasons: list[str] = Field(default_factory=list)
+
+
+class PRAttentionDecision(BaseModel):
+    pr_number: int
+    needs_review: bool
+    priority_score: float
+    priority_band: Literal["high", "medium", "low", "defer"] = "medium"
+    priority_reason: str
+    defer_reason: str = ""
+    tags: list[str] = Field(default_factory=list)
+    suggested_catalogs: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+
+
 class AnalysisRun(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid4()))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -112,6 +157,8 @@ class AnalysisRun(BaseModel):
     catalog_counts: dict[str, int] = Field(default_factory=dict)
     artifacts: list[ReportArtifact] = Field(default_factory=list)
     items: list[AnalysisItem] = Field(default_factory=list)
+    attention_contexts: list[PRAttentionContext] = Field(default_factory=list)
+    attention_decisions: list[PRAttentionDecision] = Field(default_factory=list)
 
 
 class QueueItem(BaseModel):

@@ -132,12 +132,30 @@ def create_app(
         close_list()
         return "\n".join(parts)
 
-    def _is_target_review_pr(pr, signal) -> bool:
-        if not review_target_login:
-            return True
-        if "requested-you" in signal.reasons:
-            return True
-        return any((r or "").strip().lower() == review_target_login for r in pr.requested_reviewers)
+    def _review_queue_items() -> list[QueueItem]:
+        analysis_run = repo.latest_analysis_run()
+        if analysis_run is not None:
+            if analysis_run.attention_decisions:
+                items = []
+                for decision in analysis_run.attention_decisions:
+                    if not decision.needs_review:
+                        continue
+                    pr = repo.prs.get(decision.pr_number)
+                    if not pr or pr.state != "open":
+                        continue
+                    reasons = [decision.priority_reason, *decision.tags]
+                    items.append(
+                        QueueItem(
+                            number=pr.number,
+                            title=pr.title,
+                            score=decision.priority_score,
+                            reasons=[reason for reason in reasons if reason],
+                            url=pr.html_url,
+                        )
+                    )
+                if items:
+                    return items
+        return []
 
     def _execute_review(pr_number: int) -> dict:
         if pr_number not in repo.prs:
@@ -183,17 +201,7 @@ def create_app(
         threading.Thread(target=_review_worker_loop, daemon=True).start()
 
     def _stats() -> dict:
-        needs_review_count = 0
-        for signal in repo.review_signals.values():
-            if not signal.needs_review:
-                continue
-            pr = repo.prs.get(signal.pr_number)
-            if not pr:
-                continue
-            if pr.state != "open":
-                continue
-            if _is_target_review_pr(pr, signal):
-                needs_review_count += 1
+        needs_review_count = len(_review_queue_items())
         interesting_issue_count = sum(1 for s in repo.issue_signals.values() if s.interesting)
         latest_report = repo.latest_daily_report()
         return {
@@ -329,17 +337,11 @@ def create_app(
         )
 
         review_rows = []
-        for signal in sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True):
-            pr = repo.prs.get(signal.pr_number)
-            if not pr or not signal.needs_review:
-                continue
-            if pr.state != "open":
-                continue
-            if not _is_target_review_pr(pr, signal):
-                continue
+        for item in _review_queue_items():
             review_rows.append(
-                f"<tr><td><a href=\"{escape(pr.html_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{pr.number}</a></td>"
-                f"<td>{escape(pr.title)}</td><td>{signal.score:.1f}</td><td>{escape(', '.join(signal.reasons))}</td></tr>"
+                f"<tr><td><a href=\"{escape(item.url)}\" target=\"_blank\" rel=\"noopener noreferrer\">#{item.number}</a></td>"
+                f"<td>{escape(item.title)}</td><td>{item.score:.1f}</td><td>{escape(', '.join(item.reasons))}</td>"
+                f"<td><button class=\"action-btn\" onclick=\"runPrReview({item.number}, this)\">Review</button></td></tr>"
             )
         visible_review_rows = review_rows[:10]
         folded_review_rows = review_rows[10:]
@@ -347,7 +349,7 @@ def create_app(
             "<details class=\"folded-section\">"
             f"<summary>Show {len(folded_review_rows)} more PRs</summary>"
             "<table>"
-            "<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>"
+            "<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>"
             f"<tbody>{''.join(folded_review_rows)}</tbody>"
             "</table>"
             "</details>"
@@ -479,6 +481,7 @@ def create_app(
     h1,h2,h3 {{ font-family: inherit; font-weight: 700; margin: 0 0 12px 0; }}
     h1 {{ font-size: 22px; margin-bottom: 1px; line-height: 1.02; }}
     h2 {{ font-size: 24px; margin-top: 18px; }}
+    h3 {{ font-size: 20px; }}
     .muted {{ color: var(--muted); margin: 0; }}
     .hero-side {{
       min-width: 0;
@@ -564,7 +567,7 @@ def create_app(
     .tab-fold > summary {{
       cursor: pointer;
       font-family: inherit;
-      font-size: 24px;
+      font-size: 20px;
       font-weight: 700;
       margin-bottom: 10px;
     }}
@@ -863,6 +866,16 @@ def create_app(
     <section class="layout">
       <div>
         <article class="card">
+          <details class="queue-section">
+            <summary>PRs Needing Review ({stats["needs_review_queue"]})</summary>
+            <table>
+              <thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>
+              <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="5">No PRs queued.</td></tr>'}</tbody>
+            </table>
+            {folded_review_html}
+          </details>
+        </article>
+        <article class="card" style="margin-top: 14px;">
           <details class="tab-fold">
             <summary>New/Updated PRs Today</summary>
             <table>
@@ -882,16 +895,6 @@ def create_app(
       </div>
       <aside>
         <article class="card">
-          <details class="queue-section">
-            <summary>PRs Needing Review ({stats["needs_review_queue"]})</summary>
-            <table>
-              <thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th></tr></thead>
-              <tbody>{''.join(visible_review_rows) if review_rows else '<tr><td colspan="4">No PRs queued.</td></tr>'}</tbody>
-            </table>
-            {folded_review_html}
-          </details>
-        </article>
-        <article class="card" style="margin-top: 14px;">
           <details class="queue-section">
             <summary>Interesting Issues ({stats["interesting_issues_queue"]})</summary>
             <table>
@@ -1354,19 +1357,7 @@ def create_app(
 
     @app.get("/queues/needs-review", response_model=list[QueueItem])
     def needs_review() -> list[QueueItem]:
-        items: list[QueueItem] = []
-        for signal in sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True):
-            if not signal.needs_review:
-                continue
-            pr = repo.prs.get(signal.pr_number)
-            if not pr:
-                continue
-            if pr.state != "open":
-                continue
-            if not _is_target_review_pr(pr, signal):
-                continue
-            items.append(QueueItem(number=pr.number, title=pr.title, score=signal.score, reasons=signal.reasons, url=pr.html_url))
-        return items
+        return _review_queue_items()
 
     @app.get("/queues/interesting-issues", response_model=list[QueueItem])
     def interesting_issues() -> list[QueueItem]:

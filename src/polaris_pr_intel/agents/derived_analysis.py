@@ -3,8 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from polaris_pr_intel.config import Settings
+from polaris_pr_intel.llm.adapters import HeuristicLLMAdapter
 from polaris_pr_intel.llm.base import LLMAdapter
-from polaris_pr_intel.models import AnalysisItem, AnalysisRun, DailyReport, PullRequestSnapshot, ReportArtifact
+from polaris_pr_intel.models import (
+    AnalysisItem,
+    AnalysisRun,
+    DailyReport,
+    PRAttentionContext,
+    PRAttentionDecision,
+    PullRequestSnapshot,
+    ReportArtifact,
+)
 from polaris_pr_intel.store.base import Repository
 
 
@@ -15,18 +24,21 @@ class DerivedAnalysisAgent:
         self.repo = repo
         self.llm = llm
         self.settings = settings
-        self.top_slice_limit = max(1, int(getattr(settings, "analysis_top_slice_limit", 10)))
 
     def run(self) -> tuple[AnalysisRun, DailyReport]:
-        items = self._build_items()
+        contexts = self._build_attention_contexts()
+        decisions = self._build_attention_decisions(contexts)
+        items = self._build_items(contexts, decisions)
         catalog_counts = self._catalog_counts(items)
         artifacts = self._build_artifacts(items, catalog_counts)
         run = AnalysisRun(
             source_sync_at=self.repo.last_sync_at,
-            top_slice_limit=self.top_slice_limit,
+            analysis_version="v2",
             catalog_counts=catalog_counts,
             artifacts=artifacts,
             items=items,
+            attention_contexts=contexts,
+            attention_decisions=decisions,
         )
         legacy_report = DailyReport(
             date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -34,10 +46,60 @@ class DerivedAnalysisAgent:
         )
         return run, legacy_report
 
-    def _build_items(self) -> list[AnalysisItem]:
-        items: list[AnalysisItem] = []
-        seen_pr_numbers: set[int] = set()
+    def _build_attention_contexts(self) -> list[PRAttentionContext]:
         now_dt = datetime.now(timezone.utc)
+        contexts: list[PRAttentionContext] = []
+        for pr in sorted(self.repo.prs.values(), key=lambda item: item.updated_at, reverse=True):
+            if pr.state != "open":
+                continue
+            signal = self.repo.review_signals.get(pr.number)
+            age_hours = (now_dt - pr.updated_at).total_seconds() / 3600
+            contexts.append(
+                PRAttentionContext(
+                    pr_number=pr.number,
+                    title=pr.title,
+                    body=pr.body,
+                    html_url=pr.html_url,
+                    author=pr.author,
+                    state=pr.state,
+                    draft=pr.draft,
+                    labels=pr.labels,
+                    requested_reviewers=pr.requested_reviewers,
+                    updated_at=pr.updated_at,
+                    age_hours=age_hours,
+                    inactive_days=age_hours / 24,
+                    comments_total=pr.comments,
+                    review_comments_total=pr.review_comments,
+                    comments_24h=pr.activity_comments_24h,
+                    comments_7d=pr.activity_comments_7d,
+                    reviews_24h=pr.activity_reviews_24h,
+                    reviews_7d=pr.activity_reviews_7d,
+                    commits=pr.commits,
+                    changed_files=pr.changed_files,
+                    additions=pr.additions,
+                    deletions=pr.deletions,
+                    diff_size=pr.additions + pr.deletions,
+                    has_prior_review_activity=(pr.review_comments > 0),
+                    has_prior_deep_review=self.repo.latest_pr_review_report(pr.number) is not None,
+                    rule_reasons=list(signal.reasons) if signal is not None else [],
+                )
+            )
+        return contexts
+
+    def _build_attention_decisions(self, contexts: list[PRAttentionContext]) -> list[PRAttentionDecision]:
+        raw = self.llm.analyze_attention_batch(contexts) if contexts else {}
+        expected_numbers = {ctx.pr_number for ctx in contexts}
+        if set(raw) != expected_numbers:
+            raw = HeuristicLLMAdapter().analyze_attention_batch(contexts)
+            for decision in raw.values():
+                decision.tags = list(dict.fromkeys([*decision.tags, "fallback-heuristic"]))
+        decisions = [raw[ctx.pr_number] for ctx in contexts]
+        decisions.sort(key=lambda item: item.priority_score, reverse=True)
+        return decisions
+
+    def _build_items(self, contexts: list[PRAttentionContext], decisions: list[PRAttentionDecision]) -> list[AnalysisItem]:
+        items: list[AnalysisItem] = []
+        contexts_by_number = {ctx.pr_number: ctx for ctx in contexts}
         local_now = datetime.now().astimezone()
         local_tz = local_now.tzinfo
         local_today = local_now.date()
@@ -48,61 +110,28 @@ class DerivedAnalysisAgent:
                 return dt.date() == local_today
             return dt.astimezone(local_tz).date() == local_today
 
-        top_prs = self._select_top_prs()
-        top_pr_numbers = {pr.number for pr in top_prs}
-        batch_findings = self.llm.analyze_catalog_routing_batch(top_prs) if top_prs else {}
-
-        for signal in sorted(self.repo.review_signals.values(), key=lambda s: s.score, reverse=True):
-            pr = self.repo.prs.get(signal.pr_number)
-            if not pr or pr.state != "open":
+        for decision in decisions:
+            ctx = contexts_by_number[decision.pr_number]
+            pr = self.repo.prs.get(decision.pr_number)
+            if pr is None:
                 continue
-            seen_pr_numbers.add(pr.number)
-            catalogs = self._base_pr_catalogs(pr, signal.score, signal.reasons, now_dt, _is_updated_today_local(pr.updated_at))
-            llm_summary = ""
-            llm_tags: list[str] = []
-            llm_catalogs: list[str] = []
-            confidence = 0.0
-            if pr.number in top_pr_numbers:
-                finding = batch_findings.get(pr.number)
-                if finding is not None:
-                    llm_summary = finding.summary
-                    llm_tags = list(dict.fromkeys(finding.tags))
-                    llm_catalogs = list(dict.fromkeys(finding.suggested_catalogs))
-                    confidence = finding.confidence
+            catalogs = self._decision_catalogs(ctx, decision, _is_updated_today_local(pr.updated_at))
             items.append(
                 AnalysisItem(
                     item_type="pr",
                     number=pr.number,
                     title=pr.title,
                     url=pr.html_url,
-                    score=signal.score,
-                    heuristic_reasons=signal.reasons,
-                    catalogs=self._merge_catalogs(catalogs, llm_catalogs),
-                    llm_summary=llm_summary,
-                    llm_tags=llm_tags,
-                    llm_provider=self.llm.provider if pr.number in top_pr_numbers else "",
-                    llm_model=self.llm.model if pr.number in top_pr_numbers else "",
-                    confidence=confidence,
-                    updated_at=pr.updated_at,
-                )
-            )
-
-        for pr in sorted(self.repo.prs.values(), key=lambda item: item.updated_at, reverse=True):
-            if pr.state != "open" or pr.number in seen_pr_numbers:
-                continue
-            catalogs = self._base_pr_catalogs(pr, 0.0, ["synced-open-pr"], now_dt, _is_updated_today_local(pr.updated_at))
-            if not catalogs:
-                continue
-            items.append(
-                AnalysisItem(
-                    item_type="pr",
-                    number=pr.number,
-                    title=pr.title,
-                    url=pr.html_url,
-                    score=0.0,
-                    heuristic_reasons=["synced-open-pr"],
+                    score=decision.priority_score,
+                    heuristic_reasons=ctx.rule_reasons or [decision.priority_band],
                     catalogs=catalogs,
+                    llm_summary=decision.priority_reason,
+                    llm_tags=decision.tags,
+                    llm_provider=self.llm.provider,
+                    llm_model=self.llm.model,
+                    confidence=decision.confidence,
                     updated_at=pr.updated_at,
+                    analysis_version="v2",
                 )
             )
 
@@ -121,50 +150,33 @@ class DerivedAnalysisAgent:
                     heuristic_reasons=signal.reasons,
                     catalogs=catalogs,
                     updated_at=issue.updated_at,
+                    analysis_version="v2",
                 )
             )
 
         items.sort(key=lambda item: (item.score, item.updated_at.timestamp()), reverse=True)
         return items
 
-    def _select_top_prs(self) -> list[PullRequestSnapshot]:
-        ranked: list[tuple[float, PullRequestSnapshot]] = []
-        for signal in self.repo.review_signals.values():
-            pr = self.repo.prs.get(signal.pr_number)
-            if not pr or pr.state != "open":
-                continue
-            score = signal.score
-            if signal.needs_review:
-                score += 1.0
-            ranked.append((score, pr))
-        ranked.sort(key=lambda item: (item[0], item[1].updated_at.timestamp()), reverse=True)
-        return [pr for _, pr in ranked[: self.top_slice_limit]]
-
-    def _base_pr_catalogs(
+    def _decision_catalogs(
         self,
-        pr: PullRequestSnapshot,
-        score: float,
-        reasons: list[str],
-        now_dt: datetime,
+        ctx: PRAttentionContext,
+        decision: PRAttentionDecision,
         updated_today: bool,
     ) -> list[str]:
-        catalogs: list[str] = []
-        text = f"{pr.title}\n{pr.body}".lower()
-        labels = {label.lower() for label in pr.labels}
-        if score >= self.settings.review_needed_threshold:
+        catalogs = [catalog for catalog in decision.suggested_catalogs if catalog != "needs-review"]
+        if decision.needs_review:
             catalogs.append("needs-review")
-        if "requested-you" in reasons:
-            catalogs.append("needs-review")
-        if updated_today:
+        if updated_today or ctx.comments_24h > 0:
             catalogs.append("recently-updated")
-        age_hours = (now_dt - pr.updated_at).total_seconds() / 3600
-        if age_hours >= 72:
+        if ctx.inactive_days >= 3:
             catalogs.append("aging-prs")
+        text = f"{ctx.title}\n{ctx.body}".lower()
+        labels = {label.lower() for label in ctx.labels}
         if "security" in text or "permission" in text or "security" in labels:
             catalogs.append("security-risk")
-        if pr.additions + pr.deletions >= 500 or pr.changed_files >= 20 or "large-diff" in reasons:
+        if ctx.diff_size >= 500 or ctx.changed_files >= 20:
             catalogs.append("release-risk")
-        return list(dict.fromkeys(catalogs))
+        return list(dict.fromkeys(catalog for catalog in catalogs if catalog))
 
     def _base_issue_catalogs(self, labels: list[str], score: float, reasons: list[str]) -> list[str]:
         catalogs: list[str] = []
@@ -176,18 +188,6 @@ class DerivedAnalysisAgent:
         if {"regression", "bug", "release-blocker"} & labels_lower:
             catalogs.append("release-risk")
         return catalogs
-
-    def _merge_catalogs(self, base: list[str], llm_catalogs: list[str]) -> list[str]:
-        allowed = {
-            "needs-review",
-            "aging-prs",
-            "security-risk",
-            "release-risk",
-            "interesting-issues",
-            "recently-updated",
-        }
-        merged = [catalog for catalog in [*base, *llm_catalogs] if catalog in allowed]
-        return list(dict.fromkeys(merged))
 
     def _catalog_counts(self, items: list[AnalysisItem]) -> dict[str, int]:
         counts = {
@@ -239,8 +239,7 @@ class DerivedAnalysisAgent:
             lines.append("- No high-signal issues identified.")
         else:
             for item in issue_items:
-                reason = self._compact_reason(item)
-                lines.append(f"- [#{item.number}]({item.url}) {item.title} | {reason}")
+                lines.append(f"- [#{item.number}]({item.url}) {item.title} | {self._compact_reason(item)}")
         risky_prs = [item for item in items if item.item_type == "pr" and {"security-risk", "release-risk"} & set(item.catalogs)][:4]
         if risky_prs:
             lines += ["", "## Risk Watchlist"]
@@ -260,7 +259,7 @@ class DerivedAnalysisAgent:
                 "",
                 "## What Needs Attention",
                 f"- {requested_you} PRs are explicitly waiting on you.",
-                f"- {catalog_counts.get('needs-review', 0)} PRs need review overall, but only the top queue is shown below.",
+                f"- {catalog_counts.get('needs-review', 0)} PRs need review overall, ranked by attention priority.",
                 f"- {catalog_counts.get('interesting-issues', 0)} issues look worth triage.",
                 f"- {catalog_counts.get('security-risk', 0)} PRs/issues touch security-sensitive areas.",
             ]
@@ -285,6 +284,8 @@ class DerivedAnalysisAgent:
         pr = self.repo.prs.get(item.number) if item.item_type == "pr" else None
         if pr is not None and pr.draft:
             return "draft PR, lower priority"
+        if item.llm_summary:
+            return item.llm_summary
         if "requested-you" in item.heuristic_reasons:
             return "explicitly requested from you"
         if self._has_prior_review_signal(item):
@@ -301,12 +302,8 @@ class DerivedAnalysisAgent:
 
     def _format_attention_pr(self, item: AnalysisItem) -> str:
         why = self._compact_reason(item)
-        llm_note = ""
-        if item.llm_summary:
-            llm_note = item.llm_summary.split(".")[0].strip()
-            if llm_note:
-                llm_note = f" | note: {llm_note}"
-        return f"- [#{item.number}]({item.url}) {item.title} | why: {why}{llm_note}"
+        trend_note = self._activity_trend_note(item)
+        return f"- [#{item.number}]({item.url}) {item.title} | why: {why}{trend_note}"
 
     def _review_now_items(self, review_items: list[AnalysisItem]) -> list[AnalysisItem]:
         candidates = [item for item in review_items if self._should_show_in_review_now(item)]
@@ -348,3 +345,12 @@ class DerivedAnalysisAgent:
             return False
         pr = self.repo.prs.get(item.number)
         return bool(pr and pr.draft)
+
+    def _activity_trend_note(self, item: AnalysisItem) -> str:
+        if item.item_type != "pr":
+            return ""
+        pr = self.repo.prs.get(item.number)
+        if pr is None or pr.activity_comments_24h <= 0:
+            return ""
+        label = "comment" if pr.activity_comments_24h == 1 else "comments"
+        return f" | activity: {pr.activity_comments_24h} {label} in last 24h"
