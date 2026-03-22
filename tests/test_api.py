@@ -837,6 +837,8 @@ def test_latest_pr_review_markdown_shows_blocked_reason() -> None:
     assert resp.status_code == 200
     assert "## Blocked" in resp.text
     assert "Unable to load the PR patch from GitHub or local state." in resp.text
+    assert "## Findings" not in resp.text
+    assert "No findings." not in resp.text
 
 
 def test_refresh_endpoint() -> None:

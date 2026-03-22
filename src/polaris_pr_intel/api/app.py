@@ -1121,8 +1121,6 @@ def create_app(
             "",
             "---",
             "",
-            "## Findings",
-            "",
         ]
 
         if report.blocked_reason:
@@ -1132,6 +1130,20 @@ def create_app(
                 report.blocked_reason,
                 "",
             ])
+
+        if report.findings:
+            lines.extend([
+                "## Findings",
+                "",
+            ])
+        elif not report.blocked_reason:
+            lines.extend([
+                "## Findings",
+                "",
+            ])
+
+        if not report.findings and report.blocked_reason:
+            return "\n".join(lines)
 
         if not report.findings:
             lines.append("No findings.")
