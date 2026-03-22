@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 
 from fastapi.testclient import TestClient
 
 from polaris_pr_intel.api.app import create_app
 from polaris_pr_intel.config import Settings
+from polaris_pr_intel.github.client import GitHubClient
 from polaris_pr_intel.models import AnalysisItem, AnalysisRun, DailyReport, GitHubEvent, IssueSignal, PRAttentionDecision, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
 
@@ -862,6 +863,61 @@ def test_pr_review_async_job_mode() -> None:
     assert ui.status_code == 200
     assert "Review Jobs" in ui.text
     assert job_id in ui.text
+
+
+def test_activity_metrics_keep_comments_and_reviews_separate() -> None:
+    now = datetime.now(timezone.utc)
+    hour_ago = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    two_days_ago = (now - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    four_days_ago = (now - timedelta(days=4)).isoformat().replace("+00:00", "Z")
+
+    class _FakeGitHubClient(GitHubClient):
+        def __init__(self) -> None:
+            pass
+
+        owner = "x"
+        repo = "y"
+
+        def _get(self, path: str, params=None):
+            if path.endswith("/pulls/77"):
+                return {
+                    "number": 77,
+                    "title": "Test PR",
+                    "body": "",
+                    "state": "open",
+                    "draft": False,
+                    "user": {"login": "alice"},
+                    "labels": [],
+                    "requested_reviewers": [],
+                    "comments": 0,
+                    "review_comments": 0,
+                    "commits": 1,
+                    "changed_files": 1,
+                    "additions": 1,
+                    "deletions": 1,
+                    "html_url": "https://example.com/pr/77",
+                    "updated_at": "2026-03-10T00:00:00Z",
+                }
+            if path.endswith("/issues/77/comments"):
+                return [
+                    {"created_at": hour_ago},
+                    {"created_at": two_days_ago},
+                ]
+            if path.endswith("/pulls/77/comments"):
+                return [{"created_at": hour_ago}]
+            if path.endswith("/pulls/77/reviews"):
+                return [
+                    {"submitted_at": hour_ago, "body": "looks good"},
+                    {"submitted_at": four_days_ago, "body": "older"},
+                ]
+            return []
+
+    pr = _FakeGitHubClient().get_pull_request(77)
+
+    assert pr.activity_comments_24h == 2
+    assert pr.activity_comments_7d == 3
+    assert pr.activity_reviews_24h == 1
+    assert pr.activity_reviews_7d == 2
 
 
 def test_pr_review_async_deduplicates_same_pr_when_job_inflight(monkeypatch) -> None:

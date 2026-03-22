@@ -162,7 +162,7 @@ class DerivedAnalysisAgent:
         decision: PRAttentionDecision,
         updated_today: bool,
     ) -> list[str]:
-        catalogs = list(decision.suggested_catalogs)
+        catalogs = [catalog for catalog in decision.suggested_catalogs if catalog != "needs-review"]
         if decision.needs_review:
             catalogs.append("needs-review")
         if updated_today or ctx.comments_24h > 0:

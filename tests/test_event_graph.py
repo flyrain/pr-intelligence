@@ -475,3 +475,50 @@ def test_derived_analysis_includes_activity_velocity_note() -> None:
     report = repo.latest_daily_report()
     assert report is not None
     assert "5 comments in last 24h" in report.markdown
+
+
+def test_derived_analysis_respects_needs_review_boolean_over_catalog_hint() -> None:
+    class _LLM(HeuristicLLMAdapter):
+        def analyze_attention_batch(self, contexts):
+            return {
+                contexts[0].pr_number: PRAttentionDecision(
+                    pr_number=contexts[0].pr_number,
+                    needs_review=False,
+                    priority_score=4.0,
+                    priority_band="defer",
+                    priority_reason="defer for now",
+                    suggested_catalogs=["needs-review", "aging-prs"],
+                    confidence=0.8,
+                )
+            }
+
+    repo = InMemoryRepository()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=707,
+            title="Defer PR",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=5,
+            deletions=1,
+            html_url="https://example.com/pr/707",
+            updated_at=now - timedelta(days=5),
+        )
+    )
+
+    graph = DailyReportGraph(repo, llm=_LLM(), settings=_settings())
+    graph.invoke()
+
+    run = repo.latest_analysis_run()
+    assert run is not None
+    item = next(entry for entry in run.items if entry.item_type == "pr" and entry.number == 707)
+    assert "needs-review" not in item.catalogs

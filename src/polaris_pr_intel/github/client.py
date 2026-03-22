@@ -63,8 +63,8 @@ class GitHubClient:
             require_body=True,
         )
         return {
-            "comments_24h": issue_comments_24h + review_comments_24h + reviews_24h,
-            "comments_7d": issue_comments_7d + review_comments_7d + reviews_7d,
+            "comments_24h": issue_comments_24h + review_comments_24h,
+            "comments_7d": issue_comments_7d + review_comments_7d,
             "reviews_24h": reviews_24h,
             "reviews_7d": reviews_7d,
         }
