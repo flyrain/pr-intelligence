@@ -89,30 +89,36 @@ Keep this simple in phase 1:
 
 - one app
 - one repo runtime per configured repo
-- one SQLite file per repo
+- one shared SQLite database
 
-That avoids PR number collisions like `#123` appearing in multiple repos.
+Avoid PR number collisions by storing repo identity with repo-scoped records.
+
+Use repo-scoped keys such as:
+
+- `(repo_id, pr_number)`
+- `(repo_id, issue_number)`
+- `(repo_id, pr_number)` for saved PR review reports
 
 ## Config
 
 Keep single-repo env config as-is.
 
-For multi-repo mode, add one config file listing repos and per-repo paths.
+For multi-repo mode, add one config file listing repos and per-repo local paths.
 
 Example:
 
 ```toml
+sqlite_path = ".data/pr_intel.db"
+
 [[repos]]
 owner = "apache"
 repo = "polaris"
 local_review_repo_dir = "/path/to/apache/polaris"
-sqlite_path = ".data/apache__polaris.db"
 
 [[repos]]
 owner = "my-org"
 repo = "service-a"
 local_review_repo_dir = "/path/to/service-a"
-sqlite_path = ".data/my-org__service-a.db"
 ```
 
 ## Compatibility
@@ -152,8 +158,9 @@ Instead:
 4. Add the repo-parameter routes listed above.
 5. Load the current dashboard from `/ui?repo=owner/repo`.
 6. Turn `/ui` into the repo index.
-7. Make review jobs repo-aware.
-8. Add tests for two repos with overlapping PR numbers.
+7. Make the shared SQLite store repo-aware.
+8. Make review jobs repo-aware.
+9. Add tests for two repos with overlapping PR numbers.
 
 ## Tests
 
