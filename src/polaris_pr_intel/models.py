@@ -78,11 +78,6 @@ class IssueSignal(BaseModel):
     evaluated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class DailyReport(BaseModel):
-    date: str
-    markdown: str
-
-
 class ReportArtifact(BaseModel):
     name: str
     title: str

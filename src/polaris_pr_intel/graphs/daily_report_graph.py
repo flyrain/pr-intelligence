@@ -30,15 +30,16 @@ class DailyReportGraph:
         return g.compile()
 
     def generate_report(self, state: PRIntelState) -> dict[str, Any]:
-        analysis_run, report = self.analysis.run()
+        analysis_run = self.analysis.run()
+        report_markdown = self.analysis.render_markdown(analysis_run)
         self.repo.save_analysis_run(analysis_run)
-        self.repo.save_daily_report(report)
-        return {"analysis_run": analysis_run, "daily_report": report}
+        return {"analysis_run": analysis_run, "report_markdown": report_markdown}
 
     def publish_report(self, state: PRIntelState) -> dict[str, Any]:
-        report = state["daily_report"]
-        self.publisher.publish_daily_report(report)
-        return {"notifications": [f"daily-report:{report.date}"]}
+        report_markdown = state["report_markdown"]
+        report_date = state["analysis_run"].created_at.strftime("%Y-%m-%d")
+        self.publisher.publish_daily_report(report_markdown)
+        return {"notifications": [f"daily-report:{report_date}"]}
 
     def invoke(self) -> PRIntelState:
         # LangGraph requires at least one state key in the initial input.

@@ -8,7 +8,6 @@ from polaris_pr_intel.llm.base import LLMAdapter
 from polaris_pr_intel.models import (
     AnalysisItem,
     AnalysisRun,
-    DailyReport,
     PRAttentionContext,
     PRAttentionDecision,
     PullRequestSnapshot,
@@ -25,7 +24,7 @@ class DerivedAnalysisAgent:
         self.llm = llm
         self.settings = settings
 
-    def run(self) -> tuple[AnalysisRun, DailyReport]:
+    def run(self) -> AnalysisRun:
         contexts = self._build_attention_contexts()
         decisions = self._build_attention_decisions(contexts)
         items = self._build_items(contexts, decisions)
@@ -40,11 +39,7 @@ class DerivedAnalysisAgent:
             attention_contexts=contexts,
             attention_decisions=decisions,
         )
-        legacy_report = DailyReport(
-            date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            markdown=self._legacy_markdown(run),
-        )
-        return run, legacy_report
+        return run
 
     def _build_attention_contexts(self) -> list[PRAttentionContext]:
         now_dt = datetime.now(timezone.utc)
@@ -271,7 +266,8 @@ class DerivedAnalysisAgent:
             lines.append(f"- {catalog}: {count}")
         return "\n".join(lines).strip()
 
-    def _legacy_markdown(self, run: AnalysisRun) -> str:
+    @staticmethod
+    def render_markdown(run: AnalysisRun) -> str:
         artifact_map = {artifact.name: artifact for artifact in run.artifacts}
         parts = ["# Polaris PR Attention Report"]
         for name in ("executive-summary", "reviewer-queue", "issue-risk-digest"):

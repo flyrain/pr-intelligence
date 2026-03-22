@@ -5,11 +5,13 @@ import time
 
 from fastapi.testclient import TestClient
 
+from polaris_pr_intel.agents.derived_analysis import DerivedAnalysisAgent
 from polaris_pr_intel.api.app import create_app
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.github.client import GitHubClient
-from polaris_pr_intel.models import AnalysisItem, AnalysisRun, DailyReport, GitHubEvent, IssueSignal, PRAttentionDecision, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
+from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, IssueSignal, PRAttentionDecision, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
+from polaris_pr_intel.store.sqlite_repository import SQLiteRepository
 
 
 class _DummyEventGraph:
@@ -42,14 +44,17 @@ class _DummyDailyGraph:
         decisions.sort(key=lambda item: item.priority_score, reverse=True)
         needs_review = sum(1 for decision in decisions if decision.needs_review)
         run = AnalysisRun(
+            created_at=datetime(2026, 3, 10, tzinfo=timezone.utc),
             artifacts=[ReportArtifact(name="executive-summary", title="Executive Summary", markdown="# Executive Summary\n\n- ok")],
             catalog_counts={"needs-review": needs_review},
             attention_decisions=decisions,
         )
-        report = DailyReport(date="2026-03-10", markdown="# Executive Summary\n\n- ok")
         self.repo.save_analysis_run(run)
-        self.repo.save_daily_report(report)
-        return {"notifications": ["daily-report"], "analysis_run": run, "daily_report": report}
+        return {
+            "notifications": ["daily-report"],
+            "analysis_run": run,
+            "report_markdown": DerivedAnalysisAgent.render_markdown(run),
+        }
 
 
 class _DummyIngestor:
@@ -184,8 +189,6 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
         )
     )
     repo.save_issue_signal(IssueSignal(issue_number=2, score=2.5, reasons=["label:bug"], interesting=True))
-    repo.save_daily_report(DailyReport(date="2026-03-10", markdown="report"))
-
     root = client.get("/")
     stats = client.get("/stats")
 
@@ -200,6 +203,36 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
     stats_data = stats.json()
     assert stats_data["ok"] is True
     assert stats_data["stats"]["interesting_issues_queue"] == 1
+
+
+def test_stats_endpoint_reads_pr_review_reports_with_sqlite_backend(tmp_path) -> None:
+    db_path = tmp_path / "intel.db"
+    repo = SQLiteRepository(str(db_path))
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=7,
+            provider="heuristic",
+            model="local-heuristic",
+            findings=[],
+            overall_priority=0.5,
+            overall_recommendation="Review when convenient.",
+        )
+    )
+    app = create_app(
+        repo,
+        _DummyEventGraph(),
+        _DummyDailyGraph(InMemoryRepository()),
+        pr_review_graph=_DummyPRReviewGraph(InMemoryRepository()),
+        snapshot_ingestor=_DummyIngestor(),
+        settings=Settings(github_token=""),
+    )
+
+    client = TestClient(app)
+    resp = client.get("/stats")
+
+    assert resp.status_code == 200
+    assert resp.json()["stats"]["deep_pr_reviews"] == 1
+    repo.close()
 
 
 def test_needs_review_filters_to_target_login_when_configured(monkeypatch) -> None:
@@ -417,10 +450,14 @@ def test_latest_report_markdown_endpoint() -> None:
     assert empty.status_code == 200
     assert "No report has been generated yet." in empty.text
 
-    repo.save_daily_report(DailyReport(date="2026-03-10", markdown="# Report\n\nHello"))
+    repo.save_analysis_run(
+        AnalysisRun(
+            artifacts=[ReportArtifact(name="executive-summary", title="Executive Summary", markdown="# Report\n\nHello")]
+        )
+    )
     filled = client.get("/reports/daily/latest.md")
     assert filled.status_code == 200
-    assert filled.text == "# Report\n\nHello"
+    assert filled.text == "# Polaris PR Attention Report\n\n# Report\n\nHello"
 
 
 def test_run_daily_report_refreshes_by_default() -> None:
@@ -469,7 +506,7 @@ def test_analysis_run_endpoint_returns_catalogs_and_report() -> None:
     payload = resp.json()
     assert payload["ok"] is True
     assert payload["analysis_run"]["catalog_counts"]["needs-review"] >= 1
-    assert payload["report"]["markdown"].startswith("# Executive Summary")
+    assert payload["report"]["markdown"].startswith("# Polaris PR Attention Report")
 
 
 def test_scores_recompute_endpoint_populates_queues() -> None:
@@ -528,10 +565,15 @@ def test_scores_recompute_endpoint_populates_queues() -> None:
 
 def test_ui_endpoint_renders_dashboard() -> None:
     client, repo, _, _ = _client(Settings(github_token="", llm_provider="codex_local", llm_model="gpt-5-codex"))
-    repo.save_daily_report(
-        DailyReport(
-            date="2026-03-10",
-            markdown="# Polaris PR Intelligence Report\n\n## PRs Needing Review\n- none\n\n## Aging Open PRs (72h+)\n- [#1](https://example.com/pr/1) old PR | age=100h\n\n## New/Updated PRs Today\n- [#99](https://example.com/pr/99) UI wiring | updated=2026-03-10T00:00:00+00:00",
+    repo.save_analysis_run(
+        AnalysisRun(
+            artifacts=[
+                ReportArtifact(
+                    name="executive-summary",
+                    title="Executive Summary",
+                    markdown="# Polaris PR Intelligence Report\n\n## PRs Needing Review\n- none\n\n## Aging Open PRs (72h+)\n- [#1](https://example.com/pr/1) old PR | age=100h\n\n## New/Updated PRs Today\n- [#99](https://example.com/pr/99) UI wiring | updated=2026-03-10T00:00:00+00:00",
+                )
+            ]
         )
     )
     repo.upsert_pr(
@@ -561,7 +603,6 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "text/html" in resp.headers["content-type"]
     assert "Polaris PR Intelligence" in resp.text
     assert "LLM Provider: codex_local / gpt-5-codex" in resp.text
-    assert "Latest Report" in resp.text
     assert "PRs Needing Review" in resp.text
     assert "Deep PR Reviews" in resp.text
     assert "No deep reviews yet." in resp.text
@@ -573,11 +614,9 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert '<details class="queue-section">' in resp.text
     assert '<details class="queue-section" open>' not in resp.text
     assert "New/Updated PRs Today" in resp.text
-    assert "Aging Open PRs (72h+)" in resp.text
     assert "Review" in resp.text
     assert resp.text.count("New/Updated PRs Today") >= 1
     assert resp.text.index("<summary>PRs Needing Review") < resp.text.index("<summary>New/Updated PRs Today</summary>")
-    assert resp.text.index("<summary>New/Updated PRs Today</summary>") < resp.text.index("<summary>Latest Report</summary>")
     assert '<thead><tr><th>PR</th><th>Title</th><th>Score</th><th>Reasons</th><th>Action</th></tr></thead>' in resp.text
 
 

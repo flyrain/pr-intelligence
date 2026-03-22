@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from polaris_pr_intel.models import AnalysisRun, DailyReport, PullRequestSnapshot, ReportArtifact
+from polaris_pr_intel.models import AnalysisRun, PullRequestSnapshot, ReportArtifact
 from polaris_pr_intel.store.sqlite_repository import SQLiteRepository
 
 
@@ -29,7 +29,6 @@ def test_sqlite_repository_persists_data_across_reopen(tmp_path) -> None:
         updated_at=datetime.now(timezone.utc),
     )
     repo.upsert_pr(pr)
-    repo.save_daily_report(DailyReport(date="2026-03-10", markdown="# Report"))
     repo.save_analysis_run(
         AnalysisRun(artifacts=[ReportArtifact(name="executive-summary", title="Executive Summary", markdown="# Executive Summary")])
     )
@@ -39,7 +38,6 @@ def test_sqlite_repository_persists_data_across_reopen(tmp_path) -> None:
 
     repo2 = SQLiteRepository(str(db_path))
     assert 7 in repo2.prs
-    assert repo2.latest_daily_report() is not None
     assert repo2.latest_analysis_run() is not None
     assert repo2.has_processed_event("evt-7")
     assert repo2.last_sync_at is not None
