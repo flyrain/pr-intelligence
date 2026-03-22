@@ -162,36 +162,7 @@ def create_app(
                     )
                 if items:
                     return items
-            items: list[QueueItem] = []
-            for entry in analysis_run.items:
-                if entry.item_type != "pr":
-                    continue
-                if "needs-review" not in entry.catalogs:
-                    continue
-                pr = repo.prs.get(entry.number)
-                if not pr or pr.state != "open":
-                    continue
-                items.append(
-                    QueueItem(
-                        number=pr.number,
-                        title=pr.title,
-                        score=entry.score,
-                        reasons=entry.heuristic_reasons,
-                        url=pr.html_url,
-                    )
-                )
-            if items:
-                return items
-
-        items = []
-        for signal in sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True):
-            if not signal.needs_review:
-                continue
-            pr = repo.prs.get(signal.pr_number)
-            if not pr or pr.state != "open":
-                continue
-            items.append(QueueItem(number=pr.number, title=pr.title, score=signal.score, reasons=signal.reasons, url=pr.html_url))
-        return items
+        return []
 
     def _execute_review(pr_number: int) -> dict:
         if pr_number not in repo.prs:

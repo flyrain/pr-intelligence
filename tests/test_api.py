@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from polaris_pr_intel.api.app import create_app
 from polaris_pr_intel.config import Settings
-from polaris_pr_intel.models import AnalysisItem, AnalysisRun, DailyReport, GitHubEvent, IssueSignal, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
+from polaris_pr_intel.models import AnalysisItem, AnalysisRun, DailyReport, GitHubEvent, IssueSignal, PRAttentionDecision, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
 
 
@@ -21,10 +21,29 @@ class _DummyDailyGraph:
         self.repo = repo
 
     def invoke(self) -> dict:
-        needs_review = sum(1 for signal in self.repo.review_signals.values() if signal.needs_review)
+        decisions: list[PRAttentionDecision] = []
+        for signal in self.repo.review_signals.values():
+            pr = self.repo.prs.get(signal.pr_number)
+            if pr is None or pr.state != "open":
+                continue
+            decisions.append(
+                PRAttentionDecision(
+                    pr_number=pr.number,
+                    needs_review=signal.needs_review,
+                    priority_score=signal.score,
+                    priority_band="high" if signal.score >= 5 else "medium" if signal.score >= 2 else "low",
+                    priority_reason=", ".join(signal.reasons) if signal.reasons else "needs review",
+                    tags=list(signal.reasons),
+                    suggested_catalogs=["needs-review"] if signal.needs_review else [],
+                    confidence=0.5,
+                )
+            )
+        decisions.sort(key=lambda item: item.priority_score, reverse=True)
+        needs_review = sum(1 for decision in decisions if decision.needs_review)
         run = AnalysisRun(
             artifacts=[ReportArtifact(name="executive-summary", title="Executive Summary", markdown="# Executive Summary\n\n- ok")],
             catalog_counts={"needs-review": needs_review},
+            attention_decisions=decisions,
         )
         report = DailyReport(date="2026-03-10", markdown="# Executive Summary\n\n- ok")
         self.repo.save_analysis_run(run)
@@ -126,6 +145,7 @@ def test_github_webhook_deduplicates_delivery_id() -> None:
 
 def test_root_and_stats_endpoints_return_useful_summary() -> None:
     client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
     repo.upsert_pr(
         PullRequestSnapshot(
             number=1,
@@ -143,10 +163,25 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
             additions=1,
             deletions=1,
             html_url="https://example.com/pr/1",
-            updated_at=datetime.now(timezone.utc),
+            updated_at=now,
         )
     )
-    repo.save_review_signal(ReviewSignal(pr_number=1, score=3.0, reasons=["reviewers-requested"], needs_review=True))
+    repo.save_analysis_run(
+        AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=1,
+                    needs_review=True,
+                    priority_score=3.0,
+                    priority_band="medium",
+                    priority_reason="reviewers-requested",
+                    tags=["reviewers-requested"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.6,
+                )
+            ]
+        )
+    )
     repo.save_issue_signal(IssueSignal(issue_number=2, score=2.5, reasons=["label:bug"], interesting=True))
     repo.save_daily_report(DailyReport(date="2026-03-10", markdown="report"))
 
@@ -210,8 +245,32 @@ def test_needs_review_filters_to_target_login_when_configured(monkeypatch) -> No
             updated_at=now,
         )
     )
-    repo.save_review_signal(ReviewSignal(pr_number=1, score=3.0, reasons=["requested-you"], needs_review=True))
-    repo.save_review_signal(ReviewSignal(pr_number=2, score=3.0, reasons=["reviewers-requested"], needs_review=True))
+    repo.save_analysis_run(
+        AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=1,
+                    needs_review=True,
+                    priority_score=3.0,
+                    priority_band="medium",
+                    priority_reason="requested-you",
+                    tags=["requested-you"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.6,
+                ),
+                PRAttentionDecision(
+                    pr_number=2,
+                    needs_review=True,
+                    priority_score=3.0,
+                    priority_band="medium",
+                    priority_reason="reviewers-requested",
+                    tags=["reviewers-requested"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.6,
+                ),
+            ]
+        )
+    )
 
     queued = client.get("/queues/needs-review")
     assert queued.status_code == 200
@@ -250,6 +309,28 @@ def test_needs_review_prefers_persisted_analysis_run_ordering() -> None:
     repo.save_review_signal(ReviewSignal(pr_number=12, score=3.0, reasons=["reviewers-requested"], needs_review=True))
     repo.save_analysis_run(
         AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=12,
+                    needs_review=True,
+                    priority_score=9.0,
+                    priority_band="high",
+                    priority_reason="hot queue",
+                    tags=["hot-activity-24h", "comments-24h:5"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.7,
+                ),
+                PRAttentionDecision(
+                    pr_number=11,
+                    needs_review=True,
+                    priority_score=1.0,
+                    priority_band="defer",
+                    priority_reason="inactive",
+                    tags=["inactive-over-7d"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.7,
+                ),
+            ],
             items=[
                 AnalysisItem(
                     item_type="pr",
@@ -304,7 +385,22 @@ def test_needs_review_excludes_closed_prs() -> None:
             updated_at=now,
         )
     )
-    repo.save_review_signal(ReviewSignal(pr_number=10, score=5.0, reasons=["requested-you"], needs_review=True))
+    repo.save_analysis_run(
+        AnalysisRun(
+            attention_decisions=[
+                PRAttentionDecision(
+                    pr_number=10,
+                    needs_review=True,
+                    priority_score=5.0,
+                    priority_band="high",
+                    priority_reason="requested-you",
+                    tags=["requested-you"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.7,
+                )
+            ]
+        )
+    )
 
     queued = client.get("/queues/needs-review")
     assert queued.status_code == 200
@@ -636,6 +732,7 @@ def test_ui_deep_reviews_ordered_by_review_time_desc() -> None:
 def test_ui_needs_review_folds_after_first_ten() -> None:
     client, repo, _, _ = _client()
     now = datetime.now(timezone.utc)
+    decisions: list[PRAttentionDecision] = []
     for pr_number in range(200, 212):
         repo.upsert_pr(
             PullRequestSnapshot(
@@ -657,14 +754,19 @@ def test_ui_needs_review_folds_after_first_ten() -> None:
                 updated_at=now,
             )
         )
-        repo.save_review_signal(
-            ReviewSignal(
+        decisions.append(
+            PRAttentionDecision(
                 pr_number=pr_number,
-                score=10.0 - ((pr_number - 200) * 0.1),
-                reasons=["reviewers-requested"],
                 needs_review=True,
+                priority_score=10.0 - ((pr_number - 200) * 0.1),
+                priority_band="high",
+                priority_reason="reviewers-requested",
+                tags=["reviewers-requested"],
+                suggested_catalogs=["needs-review"],
+                confidence=0.6,
             )
         )
+    repo.save_analysis_run(AnalysisRun(attention_decisions=decisions))
 
     resp = client.get("/ui")
     assert resp.status_code == 200

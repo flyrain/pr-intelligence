@@ -30,6 +30,9 @@ class PullRequestSnapshot(BaseModel):
     additions: int = 0
     deletions: int = 0
     activity_comments_24h: int = 0
+    activity_comments_7d: int = 0
+    activity_reviews_24h: int = 0
+    activity_reviews_7d: int = 0
     diff_text: str = ""
     html_url: str
     updated_at: datetime

@@ -229,20 +229,25 @@ Suggested report sections:
 
 These sections should be projections of the persisted decisions, not fresh recomputation.
 
-## API Changes
+## API Surface
 
-Add:
+Reuse the existing API surface rather than adding new attention-specific endpoints.
 
-- `GET /analysis/attention/latest`
-- `GET /analysis/attention/runs`
+Keep:
+
+- `POST /refresh`
 - `GET /queues/needs-review`
+- existing report endpoints
+- existing deep-review endpoints
+- existing analysis-run persistence and any existing endpoint that already exposes the latest analysis run
 
-Potentially add:
+Change the semantics behind the existing endpoints:
 
-- `GET /queues/requested-you`
-- `GET /queues/active-discussion`
+- `GET /queues/needs-review` should read persisted attention decisions from the latest analysis run
+- report endpoints should render from the same persisted attention decisions
+- existing analysis-run payloads should carry the new attention contexts and decisions instead of requiring a separate attention-only API
 
-Keep current deep-review endpoints unchanged.
+Optional future views like `requested-you` or `active-discussion` should only be added if the product needs distinct user-facing queue slices. They are not required for this redesign.
 
 ## Skill Rename
 
@@ -274,8 +279,8 @@ Update:
 
 - Collect full metrics for all open PRs before analysis
 - Add one-shot batch attention LLM call
-- Persist decisions
-- Make queue, dashboard, and report read persisted attention decisions
+- Persist decisions inside the existing analysis run structure
+- Make the existing queue, dashboard, and report endpoints read persisted attention decisions
 
 ### Phase 3
 

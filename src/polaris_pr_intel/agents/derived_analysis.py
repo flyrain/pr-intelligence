@@ -54,7 +54,6 @@ class DerivedAnalysisAgent:
                 continue
             signal = self.repo.review_signals.get(pr.number)
             age_hours = (now_dt - pr.updated_at).total_seconds() / 3600
-            total_discussion = pr.comments + pr.review_comments
             contexts.append(
                 PRAttentionContext(
                     pr_number=pr.number,
@@ -72,9 +71,9 @@ class DerivedAnalysisAgent:
                     comments_total=pr.comments,
                     review_comments_total=pr.review_comments,
                     comments_24h=pr.activity_comments_24h,
-                    comments_7d=max(pr.activity_comments_24h, min(total_discussion, 50)),
-                    reviews_24h=1 if pr.activity_comments_24h > 0 and pr.review_comments > 0 else 0,
-                    reviews_7d=min(pr.review_comments, 20),
+                    comments_7d=pr.activity_comments_7d,
+                    reviews_24h=pr.activity_reviews_24h,
+                    reviews_7d=pr.activity_reviews_7d,
                     commits=pr.commits,
                     changed_files=pr.changed_files,
                     additions=pr.additions,
