@@ -132,13 +132,6 @@ def create_app(
         close_list()
         return "\n".join(parts)
 
-    def _is_target_review_pr(pr, signal) -> bool:
-        if not review_target_login:
-            return True
-        if "requested-you" in signal.reasons:
-            return True
-        return any((r or "").strip().lower() == review_target_login for r in pr.requested_reviewers)
-
     def _review_queue_items() -> list[QueueItem]:
         analysis_run = repo.latest_analysis_run()
         if analysis_run is not None:
