@@ -4,7 +4,6 @@ from typing import TypedDict
 
 from polaris_pr_intel.models import (
     AnalysisRun,
-    DailyReport,
     GitHubEvent,
     IssueSignal,
     IssueSnapshot,
@@ -26,7 +25,7 @@ class PRIntelState(TypedDict, total=False):
     pr_review_report: PRReviewReport
     review_signal: ReviewSignal
     issue_signal: IssueSignal
-    daily_report: DailyReport
     analysis_run: AnalysisRun
+    report_markdown: str
     notifications: list[str]
     errors: list[str]

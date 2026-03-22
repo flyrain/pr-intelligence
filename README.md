@@ -25,6 +25,7 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 - **Catalog routing** for specialized PR categories (architecture, security, performance, etc.)
 - **Batch LLM analysis** processes multiple PRs efficiently in a single call
 - **Structured artifacts** accessible via REST API for integration with other tools
+- **Single source of truth**: `analysis_runs` are persisted; markdown reports are rendered from the latest persisted analysis run
 
 ### ⚡ Scalable Async Processing
 - **In-memory job queue** with configurable worker count for parallel PR review processing
@@ -65,13 +66,14 @@ This is the one-stop command that:
 - Prunes stale locally-open PRs no longer open on GitHub
 - Recomputes review/issue priority scores using deterministic scoring rules
 - Runs post-sync derived analysis in a batched LLM call for the top PR slice
-- Generates multiple report artifacts
+- Persists one structured analysis run plus its derived artifacts
 
 - **View the latest report:**
 ```bash
 ./run.sh report
 ```
 Prints the latest markdown report (read-only, fast).
+The markdown is rendered from the latest persisted analysis run rather than read from a separately persisted report row.
 
 To generate a fresh report first:
 ```bash
@@ -203,7 +205,7 @@ Current limitation:
 - `POST /refresh` - Full refresh: sync + score + analyze + report (recommended)
 
 ### Reports
-- `GET /reports/daily/latest.md` - Latest generated report (markdown)
+- `GET /reports/daily/latest.md` - Latest generated report (markdown rendered from the latest persisted analysis run)
 
 ### PR Reviews (Deep Analysis)
 - `POST /reviews/pr/{pr_number}/run` - Async review (returns immediately)
@@ -240,7 +242,7 @@ The service uses **two separate skill files** for different analysis tasks:
    - Used by `DailyReportGraph` for batch analysis across all open PRs
    - Invoked via `/refresh`
    - Processes multiple PRs in a single LLM call for efficiency
-   - Generates derived analysis artifacts and attention-oriented reports
+   - Persists structured attention analysis and generates derived markdown/artifacts from that persisted run
 
 This separation allows:
 - Different prompting strategies for deep vs. broad analysis

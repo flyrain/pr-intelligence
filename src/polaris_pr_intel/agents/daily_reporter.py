@@ -2,17 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from polaris_pr_intel.models import DailyReport
 from polaris_pr_intel.store.base import Repository
 
 
 class DailyReporterAgent:
-    def run(self, repo: Repository) -> DailyReport:
+    def run(self, repo: Repository) -> str:
         now_dt = datetime.now(timezone.utc)
         local_now = datetime.now().astimezone()
         local_tz = local_now.tzinfo
         today = local_now.date()
-        now = now_dt.strftime("%Y-%m-%d")
 
         pr_signals = sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True)
         issue_signals = sorted(repo.issue_signals.values(), key=lambda s: s.score, reverse=True)
@@ -86,4 +84,4 @@ class DailyReporterAgent:
         else:
             lines.append("- No deep PR review reports yet.")
 
-        return DailyReport(date=now, markdown="\n".join(lines))
+        return "\n".join(lines)

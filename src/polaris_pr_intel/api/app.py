@@ -15,6 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from polaris_pr_intel.agents.derived_analysis import DerivedAnalysisAgent
 from polaris_pr_intel.agents.issue_insight import IssueInsightAgent
 from polaris_pr_intel.agents.review_need import ReviewNeedAgent
 from polaris_pr_intel.config import Settings
@@ -22,7 +23,7 @@ from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
-from polaris_pr_intel.models import AnalysisItem, GitHubEvent, QueueItem
+from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, QueueItem
 from polaris_pr_intel.store.base import Repository
 
 if TYPE_CHECKING:
@@ -132,6 +133,20 @@ def create_app(
         close_list()
         return "\n".join(parts)
 
+    def _latest_report_markdown() -> str | None:
+        run = repo.latest_analysis_run()
+        if run is None:
+            return None
+        return DerivedAnalysisAgent.render_markdown(run)
+
+    def _report_payload(run: AnalysisRun | None) -> dict | None:
+        if run is None:
+            return None
+        return {
+            "date": run.created_at.strftime("%Y-%m-%d"),
+            "markdown": DerivedAnalysisAgent.render_markdown(run),
+        }
+
     def _review_queue_items() -> list[QueueItem]:
         analysis_run = repo.latest_analysis_run()
         if analysis_run is not None:
@@ -203,7 +218,7 @@ def create_app(
     def _stats() -> dict:
         needs_review_count = len(_review_queue_items())
         interesting_issue_count = sum(1 for s in repo.issue_signals.values() if s.interesting)
-        latest_report = repo.latest_daily_report()
+        latest_run = repo.latest_analysis_run()
         return {
             "prs_tracked": len(repo.prs),
             "issues_tracked": len(repo.issues),
@@ -213,8 +228,7 @@ def create_app(
             "analysis_runs": len(repo.analysis_runs),
             "needs_review_queue": needs_review_count,
             "interesting_issues_queue": interesting_issue_count,
-            "daily_reports": len(repo.daily_reports),
-            "latest_report_date": latest_report.date if latest_report else None,
+            "latest_report_date": latest_run.created_at.strftime("%Y-%m-%d") if latest_run else None,
             "last_sync_at": repo.last_sync_at.isoformat() if repo.last_sync_at else None,
         }
 
@@ -272,10 +286,10 @@ def create_app(
         local_now = datetime.now().astimezone()
         local_today = local_now.date()
         local_tz = local_now.tzinfo
-        latest = repo.latest_daily_report()
+        latest_markdown = _latest_report_markdown()
         latest_report_html = (
-            _report_markdown_to_html(latest.markdown)
-            if latest
+            _report_markdown_to_html(latest_markdown)
+            if latest_markdown
             else "<h2>No Report Yet</h2><p>Run <code>POST /refresh</code> to generate one.</p>"
         )
         new_updated_rows = []
@@ -998,7 +1012,6 @@ def create_app(
         # Step 3: Run analysis & generate report
         out = daily_graph.invoke()
         analysis_run = out.get("analysis_run")
-        report = out.get("daily_report")
 
         return {
             "ok": True,
@@ -1010,7 +1023,7 @@ def create_app(
                 "interesting_issues": interesting_issues,
             },
             "analysis_run": analysis_run.model_dump() if analysis_run else None,
-            "report": report.model_dump() if report else None,
+            "report": _report_payload(analysis_run),
             "notifications": out.get("notifications", []),
         }
 
@@ -1350,10 +1363,10 @@ def create_app(
 
     @app.get("/reports/daily/latest.md", response_class=PlainTextResponse)
     def latest_report_markdown() -> str:
-        report = repo.latest_daily_report()
-        if not report:
+        markdown = _latest_report_markdown()
+        if markdown is None:
             return "# Polaris PR Intelligence Report\n\nNo report has been generated yet.\n"
-        return report.markdown
+        return markdown
 
     @app.get("/queues/needs-review", response_model=list[QueueItem])
     def needs_review() -> list[QueueItem]:

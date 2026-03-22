@@ -7,7 +7,6 @@ from pathlib import Path
 
 from polaris_pr_intel.models import (
     AnalysisRun,
-    DailyReport,
     IssueSignal,
     IssueSnapshot,
     PRReviewReport,
@@ -61,11 +60,6 @@ class SQLiteRepository:
                     generated_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS daily_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    report_date TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
                 CREATE TABLE IF NOT EXISTS analysis_runs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
@@ -117,11 +111,6 @@ class SQLiteRepository:
         return {int(row["issue_number"]): IssueSignal.model_validate_json(row["payload"]) for row in rows}
 
     @property
-    def daily_reports(self) -> list[DailyReport]:
-        with self._lock:
-            rows = self._conn.execute("SELECT payload FROM daily_reports ORDER BY id ASC").fetchall()
-        return [DailyReport.model_validate_json(row["payload"]) for row in rows]
-
     @property
     def pr_review_reports(self) -> dict[int, PRReviewReport]:
         with self._lock:
@@ -204,38 +193,12 @@ class SQLiteRepository:
                 (report.pr_number, report.overall_priority, report.generated_at.isoformat(), report.model_dump_json()),
             )
 
-    def save_daily_report(self, report: DailyReport) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(
-                "INSERT INTO daily_reports(report_date, payload) VALUES(?, ?)",
-                (report.date, report.model_dump_json()),
-            )
-
     def save_analysis_run(self, run: AnalysisRun) -> None:
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO analysis_runs(created_at, payload) VALUES(?, ?)",
                 (run.created_at.isoformat(), run.model_dump_json()),
             )
-
-    def latest_daily_report(self) -> DailyReport | None:
-        with self._lock:
-            row = self._conn.execute("SELECT payload FROM daily_reports ORDER BY id DESC LIMIT 1").fetchone()
-        if not row:
-            return None
-        return DailyReport.model_validate_json(row["payload"])
-
-    def list_daily_reports(self, limit: int = 30, offset: int = 0) -> list[DailyReport]:
-        if offset < 0:
-            offset = 0
-        if limit < 1:
-            limit = 1
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT payload FROM daily_reports ORDER BY id DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
-        return [DailyReport.model_validate_json(row["payload"]) for row in rows]
 
     def latest_analysis_run(self) -> AnalysisRun | None:
         with self._lock:

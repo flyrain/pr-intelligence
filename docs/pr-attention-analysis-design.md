@@ -218,6 +218,7 @@ Recommendation: expose fallback explicitly rather than silently mixing sources.
 ## Reporting
 
 The attention report should be derived from the same persisted decisions.
+The markdown report should be rendered from the latest persisted analysis run, not stored as a separate canonical record.
 
 Suggested report sections:
 
@@ -246,6 +247,7 @@ Change the semantics behind the existing endpoints:
 - `GET /queues/needs-review` should read persisted attention decisions from the latest analysis run
 - report endpoints should render from the same persisted attention decisions
 - existing analysis-run payloads should carry the new attention contexts and decisions instead of requiring a separate attention-only API
+- markdown report payloads should be treated as presentation output, not an independently persisted source of truth
 
 Optional future views like `requested-you` or `active-discussion` should only be added if the product needs distinct user-facing queue slices. They are not required for this redesign.
 

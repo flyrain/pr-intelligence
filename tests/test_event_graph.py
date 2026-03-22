@@ -82,7 +82,7 @@ def test_daily_report_graph_runs_with_empty_repo() -> None:
     out = graph.invoke()
 
     assert out["notifications"][0].startswith("daily-report:")
-    assert repo.latest_daily_report() is not None
+    assert repo.latest_analysis_run() is not None
 
 
 def test_pr_review_graph_creates_report_for_existing_pr() -> None:
@@ -209,11 +209,10 @@ def test_daily_report_new_updated_prs_excludes_closed_prs() -> None:
     )
 
     graph = DailyReportGraph(repo, llm=HeuristicLLMAdapter(), settings=_settings())
-    graph.invoke()
-    report = repo.latest_daily_report()
-    assert report is not None
-    assert "Open PR today" in report.markdown
-    assert "Merged PR today" not in report.markdown
+    out = graph.invoke()
+    report_markdown = out["report_markdown"]
+    assert "Open PR today" in report_markdown
+    assert "Merged PR today" not in report_markdown
 
 
 def test_daily_report_analysis_preserves_requested_you_and_security_label_catalogs() -> None:
@@ -305,7 +304,7 @@ def test_derived_analysis_uses_attention_batch_method() -> None:
     llm = _RecordingLLM()
 
     agent = DerivedAnalysisAgent(repo, llm=llm, settings=_settings())
-    run, _ = agent.run()
+    run = agent.run()
 
     assert any(item.number == 604 for item in run.items)
     assert llm.attention_batch_calls == [[604]]
@@ -357,13 +356,12 @@ def test_review_now_prefers_recent_unreviewed_prs_and_nudges_stale_ones() -> Non
     repo.save_review_signal(ReviewSignal(pr_number=702, score=4.0, reasons=["requested-you"], needs_review=True))
 
     graph = DailyReportGraph(repo, llm=HeuristicLLMAdapter(), settings=_settings())
-    graph.invoke()
+    out = graph.invoke()
 
-    report = repo.latest_daily_report()
-    assert report is not None
-    assert "Recent PR" in report.markdown
-    assert "Stale PR" in report.markdown
-    assert report.markdown.index("Recent PR") < report.markdown.index("## Aging PRs To Nudge")
+    report_markdown = out["report_markdown"]
+    assert "Recent PR" in report_markdown
+    assert "Stale PR" in report_markdown
+    assert report_markdown.index("Recent PR") < report_markdown.index("## Aging PRs To Nudge")
 
 
 def test_review_now_deprioritizes_already_reviewed_and_draft_prs() -> None:
@@ -430,11 +428,9 @@ def test_review_now_deprioritizes_already_reviewed_and_draft_prs() -> None:
     repo.save_review_signal(ReviewSignal(pr_number=705, score=3.0, reasons=["requested-you"], needs_review=True))
 
     graph = DailyReportGraph(repo, llm=HeuristicLLMAdapter(), settings=_settings())
-    graph.invoke()
+    out = graph.invoke()
 
-    report = repo.latest_daily_report()
-    assert report is not None
-    review_section = report.markdown.split("## Review Now", 1)[1].split("## Recently Updated PRs", 1)[0]
+    review_section = out["report_markdown"].split("## Review Now", 1)[1].split("## Recently Updated PRs", 1)[0]
     assert "Fresh PR" in review_section
     assert "Draft PR" not in review_section
     assert "Reviewed PR" in review_section
@@ -470,11 +466,9 @@ def test_derived_analysis_includes_activity_velocity_note() -> None:
     )
 
     graph = DailyReportGraph(repo, llm=HeuristicLLMAdapter(), settings=_settings())
-    graph.invoke()
+    out = graph.invoke()
 
-    report = repo.latest_daily_report()
-    assert report is not None
-    assert "5 comments in last 24h" in report.markdown
+    assert "5 comments in last 24h" in out["report_markdown"]
 
 
 def test_derived_analysis_respects_needs_review_boolean_over_catalog_hint() -> None:
