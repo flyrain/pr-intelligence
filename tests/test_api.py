@@ -797,6 +797,48 @@ def test_pr_review_returns_not_found_when_fetch_fails() -> None:
     assert data["errors"] == ["pr-not-found:999"]
 
 
+def test_latest_pr_review_markdown_shows_blocked_reason() -> None:
+    client, repo, _, _ = _client()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=333,
+            title="Catalog factory wiring",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=2,
+            additions=10,
+            deletions=4,
+            html_url="https://example.com/pr/333",
+            updated_at=now,
+        )
+    )
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=333,
+            provider="heuristic",
+            model="local-heuristic",
+            findings=[],
+            overall_priority=0.0,
+            overall_recommendation="Review blocked until the PR patch is available.",
+            blocked_reason="Unable to load the PR patch from GitHub or local state.",
+        )
+    )
+
+    resp = client.get("/reviews/pr/333/latest.md")
+
+    assert resp.status_code == 200
+    assert "## Blocked" in resp.text
+    assert "Unable to load the PR patch from GitHub or local state." in resp.text
+
+
 def test_refresh_endpoint() -> None:
     """Test the unified /refresh endpoint."""
     client, repo, ingestor, _ = _client()

@@ -142,3 +142,4 @@ class PRReviewReport(BaseModel):
     findings: list[PRSubagentFinding] = Field(default_factory=list)
     overall_priority: float
     overall_recommendation: str
+    blocked_reason: str = ""

@@ -17,6 +17,17 @@ class PRSubagentReviewer:
             return self.llm.analyze_pr_with_self_review(pr)
         return self.llm.analyze_pr_comprehensive(pr)
 
+    def blocked_report(self, pr: PullRequestSnapshot, reason: str) -> PRReviewReport:
+        return PRReviewReport(
+            pr_number=pr.number,
+            provider=self.llm.provider,
+            model=self.llm.model,
+            findings=[],
+            overall_priority=0.0,
+            overall_recommendation="Review blocked until the PR patch is available.",
+            blocked_reason=reason,
+        )
+
     def aggregate(self, pr: PullRequestSnapshot, findings: list[PRSubagentFinding]) -> PRReviewReport:
         if not findings:
             return PRReviewReport(

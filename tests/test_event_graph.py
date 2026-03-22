@@ -125,6 +125,45 @@ def test_pr_review_graph_creates_report_for_existing_pr() -> None:
     assert len(report.findings) == 4
 
 
+def test_pr_review_graph_persists_blocked_report_when_diff_unavailable() -> None:
+    class _FailingGitHubClient:
+        def get_pull_request_diff(self, number: int) -> str:
+            raise RuntimeError("sandbox blocked fetch")
+
+    repo = InMemoryRepository()
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=91,
+            title="Dispatcher wiring cleanup",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=3,
+            additions=20,
+            deletions=10,
+            html_url="https://example.com/pr/91",
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    reviewer = PRSubagentReviewer(HeuristicLLMAdapter())
+    graph = PRReviewGraph(repo, reviewer, gh=_FailingGitHubClient())  # type: ignore[arg-type]
+
+    out = graph.invoke(91)
+
+    assert out["notifications"] == ["review-blocked", "pr-review:91"]
+    assert out["errors"] == ["pr-diff-unavailable:91"]
+    report = repo.latest_pr_review_report(91)
+    assert report is not None
+    assert report.blocked_reason
+    assert report.findings == []
+
+
 def test_daily_report_new_updated_prs_excludes_closed_prs() -> None:
     repo = InMemoryRepository()
     now = datetime.now(timezone.utc)
