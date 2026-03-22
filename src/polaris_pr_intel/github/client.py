@@ -116,27 +116,22 @@ class GitHubClient:
         require_body: bool = False,
     ) -> tuple[int, ...]:
         counts = [0 for _ in since_cutoffs]
-        oldest_cutoff = min(since_cutoffs)
         page = 1
         while True:
             data = self._get(path, params={"per_page": 100, "page": page})
             if not data:
                 break
-            stop_paging = False
             for item in data:
                 timestamp = item.get(timestamp_key)
                 if not timestamp:
                     continue
                 created_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                if created_at < oldest_cutoff:
-                    stop_paging = True
-                    continue
                 if require_body and not (item.get("body") or "").strip():
                     continue
                 for index, cutoff in enumerate(since_cutoffs):
                     if created_at >= cutoff:
                         counts[index] += 1
-            if stop_paging or len(data) < 100:
+            if len(data) < 100:
                 break
             page += 1
         return tuple(counts)

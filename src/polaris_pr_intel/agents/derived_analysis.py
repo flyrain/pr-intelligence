@@ -89,9 +89,9 @@ class DerivedAnalysisAgent:
     def _build_attention_decisions(self, contexts: list[PRAttentionContext]) -> list[PRAttentionDecision]:
         raw = self.llm.analyze_attention_batch(contexts) if contexts else {}
         if len(raw) < len(contexts):
-            fallback = HeuristicLLMAdapter().analyze_attention_batch(contexts)
-            for ctx in contexts:
-                raw.setdefault(ctx.pr_number, fallback[ctx.pr_number])
+            raw = HeuristicLLMAdapter().analyze_attention_batch(contexts)
+            for decision in raw.values():
+                decision.tags = list(dict.fromkeys([*decision.tags, "fallback-heuristic"]))
         decisions = [raw[ctx.pr_number] for ctx in contexts]
         decisions.sort(key=lambda item: item.priority_score, reverse=True)
         return decisions

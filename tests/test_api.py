@@ -920,6 +920,54 @@ def test_activity_metrics_keep_comments_and_reviews_separate() -> None:
     assert pr.activity_reviews_7d == 2
 
 
+def test_activity_metrics_scan_all_pages_when_api_order_is_oldest_first() -> None:
+    now = datetime.now(timezone.utc)
+    hour_ago = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    ten_days_ago = (now - timedelta(days=10)).isoformat().replace("+00:00", "Z")
+
+    class _FakeGitHubClient(GitHubClient):
+        def __init__(self) -> None:
+            pass
+
+        owner = "x"
+        repo = "y"
+
+        def _get(self, path: str, params=None):
+            page = (params or {}).get("page", 1)
+            if path.endswith("/pulls/77"):
+                return {
+                    "number": 77,
+                    "title": "Test PR",
+                    "body": "",
+                    "state": "open",
+                    "draft": False,
+                    "user": {"login": "alice"},
+                    "labels": [],
+                    "requested_reviewers": [],
+                    "comments": 0,
+                    "review_comments": 0,
+                    "commits": 1,
+                    "changed_files": 1,
+                    "additions": 1,
+                    "deletions": 1,
+                    "html_url": "https://example.com/pr/77",
+                    "updated_at": hour_ago,
+                }
+            if path.endswith("/issues/77/comments"):
+                if page == 1:
+                    return [{"created_at": ten_days_ago}] * 100
+                if page == 2:
+                    return [{"created_at": hour_ago}]
+            if path.endswith("/pulls/77/comments") or path.endswith("/pulls/77/reviews"):
+                return []
+            return []
+
+    pr = _FakeGitHubClient().get_pull_request(77)
+
+    assert pr.activity_comments_24h == 1
+    assert pr.activity_comments_7d == 1
+
+
 def test_pr_review_async_deduplicates_same_pr_when_job_inflight(monkeypatch) -> None:
     monkeypatch.setenv("REVIEW_JOB_WORKERS", "1")
     client, _, _, pr_review_graph = _client()

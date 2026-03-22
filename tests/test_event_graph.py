@@ -522,3 +522,53 @@ def test_derived_analysis_respects_needs_review_boolean_over_catalog_hint() -> N
     assert run is not None
     item = next(entry for entry in run.items if entry.item_type == "pr" and entry.number == 707)
     assert "needs-review" not in item.catalogs
+
+
+def test_derived_analysis_uses_full_fallback_when_batch_result_is_partial() -> None:
+    class _PartialLLM(HeuristicLLMAdapter):
+        def analyze_attention_batch(self, contexts):
+            return {
+                contexts[0].pr_number: PRAttentionDecision(
+                    pr_number=contexts[0].pr_number,
+                    needs_review=True,
+                    priority_score=9.5,
+                    priority_band="high",
+                    priority_reason="partial llm result",
+                    tags=["llm-only"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.9,
+                )
+            }
+
+    repo = InMemoryRepository()
+    now = datetime.now(timezone.utc)
+    for number in (708, 709):
+        repo.upsert_pr(
+            PullRequestSnapshot(
+                number=number,
+                title=f"PR {number}",
+                body="",
+                state="open",
+                draft=False,
+                author="alice",
+                labels=[],
+                requested_reviewers=["alice"],
+                comments=0,
+                review_comments=0,
+                commits=1,
+                changed_files=1,
+                additions=5,
+                deletions=1,
+                html_url=f"https://example.com/pr/{number}",
+                updated_at=now - timedelta(hours=1),
+            )
+        )
+
+    graph = DailyReportGraph(repo, llm=_PartialLLM(), settings=_settings())
+    graph.invoke()
+
+    run = repo.latest_analysis_run()
+    assert run is not None
+    assert len(run.attention_decisions) == 2
+    assert all("fallback-heuristic" in decision.tags for decision in run.attention_decisions)
+    assert all(decision.priority_reason != "partial llm result" for decision in run.attention_decisions)
