@@ -111,7 +111,6 @@ class SQLiteRepository:
         return {int(row["issue_number"]): IssueSignal.model_validate_json(row["payload"]) for row in rows}
 
     @property
-    @property
     def pr_review_reports(self) -> dict[int, PRReviewReport]:
         with self._lock:
             rows = self._conn.execute("SELECT pr_number, payload FROM pr_review_reports").fetchall()
