@@ -572,3 +572,53 @@ def test_derived_analysis_uses_full_fallback_when_batch_result_is_partial() -> N
     assert len(run.attention_decisions) == 2
     assert all("fallback-heuristic" in decision.tags for decision in run.attention_decisions)
     assert all(decision.priority_reason != "partial llm result" for decision in run.attention_decisions)
+
+
+def test_derived_analysis_uses_full_fallback_when_batch_result_has_wrong_keys() -> None:
+    class _WrongKeyLLM(HeuristicLLMAdapter):
+        def analyze_attention_batch(self, contexts):
+            return {
+                999999: PRAttentionDecision(
+                    pr_number=999999,
+                    needs_review=True,
+                    priority_score=9.5,
+                    priority_band="high",
+                    priority_reason="hallucinated result",
+                    tags=["llm-only"],
+                    suggested_catalogs=["needs-review"],
+                    confidence=0.9,
+                )
+            }
+
+    repo = InMemoryRepository()
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=710,
+            title="PR 710",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=["alice"],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=5,
+            deletions=1,
+            html_url="https://example.com/pr/710",
+            updated_at=now - timedelta(hours=1),
+        )
+    )
+
+    graph = DailyReportGraph(repo, llm=_WrongKeyLLM(), settings=_settings())
+    graph.invoke()
+
+    run = repo.latest_analysis_run()
+    assert run is not None
+    assert len(run.attention_decisions) == 1
+    assert run.attention_decisions[0].pr_number == 710
+    assert "fallback-heuristic" in run.attention_decisions[0].tags
+    assert run.attention_decisions[0].priority_reason != "hallucinated result"
