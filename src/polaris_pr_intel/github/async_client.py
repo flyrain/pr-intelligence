@@ -284,3 +284,13 @@ class GitHubClientWrapper:
                 await client.close()
 
         return asyncio.run(_run())
+
+    def get_pull_request_activity_metrics(self, number: int) -> dict[str, int]:
+        async def _run():
+            client = AsyncGitHubClient(self._token, self._owner, self._repo)
+            try:
+                return await client.get_pull_request_activity_metrics(number)
+            finally:
+                await client.close()
+
+        return asyncio.run(_run())
