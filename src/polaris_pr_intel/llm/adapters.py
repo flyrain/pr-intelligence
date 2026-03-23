@@ -937,12 +937,8 @@ Pull requests:
                 "--allowedTools", "Read,Grep,Glob,Bash",
                 "--setting-sources", "user,project,local",
             ]
-            skill_prompt = self._load_skill_prompt(self.review_skill_file)
-            if skill_prompt:
-                logger.info("Loaded review skill (%d chars) from %s", len(skill_prompt), self.review_skill_file)
-                cmd.extend(["--append-system-prompt", skill_prompt])
-            else:
-                logger.warning("No review skill loaded (skill_file=%r)", self.review_skill_file)
+            # Skills are already included in prompts by callers (_build_prompt, _build_catalog_prompt, etc.)
+            # so we don't need to append them here
             if self.model and self.model not in {"claude-code-local", "local-heuristic"}:
                 cmd.extend(["--model", self.model])
             _log_cli_invocation(self.provider, cmd, prompt)

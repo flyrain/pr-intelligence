@@ -301,3 +301,185 @@ def test_factory_backward_compat_old_repo_dir_vars(monkeypatch) -> None:
     settings = load_settings()
     adapter = build_llm_adapter(settings)
     assert adapter.provider == "codex_local"
+
+
+def test_claude_code_local_adapter_review_prompt_uses_review_skill_only(tmp_path) -> None:
+    """Verify that PR review prompts include review skill and NOT analysis skill."""
+    review_skill_file = tmp_path / "review-skill.md"
+    review_skill_file.write_text(
+        "---\nname: polaris-pr-review\ndescription: x\n---\n# Apache Polaris PR Review Skill\n\nCheck code correctness.",
+        encoding="utf-8",
+    )
+    analysis_skill_file = tmp_path / "analysis-skill.md"
+    analysis_skill_file.write_text(
+        "---\nname: polaris-attention-analysis\ndescription: x\n---\n# Apache Polaris Attention Analysis Skill\n\nRank PRs for attention.",
+        encoding="utf-8",
+    )
+    adapter = ClaudeCodeLocalAdapter(
+        command="claude",
+        review_skill_file=str(review_skill_file),
+        analysis_skill_file=str(analysis_skill_file),
+    )
+
+    # Test single-aspect review prompt
+    review_prompt = adapter._build_prompt("code-risk", "code risk and complexity", _pr())
+    assert "Apache Polaris PR Review Skill" in review_prompt
+    assert "Check code correctness." in review_prompt
+    assert "Apache Polaris Attention Analysis Skill" not in review_prompt
+    assert "Rank PRs for attention." not in review_prompt
+
+    # Test comprehensive review prompt
+    comprehensive_prompt = adapter._build_comprehensive_prompt(_pr())
+    assert "Apache Polaris PR Review Skill" in comprehensive_prompt
+    assert "Check code correctness." in comprehensive_prompt
+    assert "Apache Polaris Attention Analysis Skill" not in comprehensive_prompt
+    assert "Rank PRs for attention." not in comprehensive_prompt
+
+
+def test_claude_code_local_adapter_catalog_prompt_uses_analysis_skill_only(tmp_path) -> None:
+    """Verify that catalog routing prompts include analysis skill and NOT review skill."""
+    review_skill_file = tmp_path / "review-skill.md"
+    review_skill_file.write_text(
+        "---\nname: polaris-pr-review\ndescription: x\n---\n# Apache Polaris PR Review Skill\n\nCheck code correctness.",
+        encoding="utf-8",
+    )
+    analysis_skill_file = tmp_path / "analysis-skill.md"
+    analysis_skill_file.write_text(
+        "---\nname: polaris-attention-analysis\ndescription: x\n---\n# Apache Polaris Attention Analysis Skill\n\nRank PRs for attention.",
+        encoding="utf-8",
+    )
+    adapter = ClaudeCodeLocalAdapter(
+        command="claude",
+        review_skill_file=str(review_skill_file),
+        analysis_skill_file=str(analysis_skill_file),
+    )
+
+    catalog_prompt = adapter._build_catalog_prompt(_pr())
+    assert "Apache Polaris Attention Analysis Skill" in catalog_prompt
+    assert "Rank PRs for attention." in catalog_prompt
+    assert "Apache Polaris PR Review Skill" not in catalog_prompt
+    assert "Check code correctness." not in catalog_prompt
+
+
+def test_claude_code_local_adapter_attention_batch_uses_analysis_skill_only(tmp_path) -> None:
+    """Verify that attention batch prompts include analysis skill and NOT review skill."""
+    review_skill_file = tmp_path / "review-skill.md"
+    review_skill_file.write_text(
+        "---\nname: polaris-pr-review\ndescription: x\n---\n# Apache Polaris PR Review Skill\n\nCheck code correctness.",
+        encoding="utf-8",
+    )
+    analysis_skill_file = tmp_path / "analysis-skill.md"
+    analysis_skill_file.write_text(
+        "---\nname: polaris-attention-analysis\ndescription: x\n---\n# Apache Polaris Attention Analysis Skill\n\nRank PRs for attention.",
+        encoding="utf-8",
+    )
+    adapter = ClaudeCodeLocalAdapter(
+        command="claude",
+        review_skill_file=str(review_skill_file),
+        analysis_skill_file=str(analysis_skill_file),
+    )
+
+    # Create attention contexts for batch analysis
+    from polaris_pr_intel.models import PRAttentionContext
+    from datetime import datetime, timezone
+
+    contexts = [
+        PRAttentionContext(
+            pr_number=77,
+            title="Test PR",
+            author="alice",
+            state="open",
+            draft=False,
+            labels=["security"],
+            requested_reviewers=["bob"],
+            updated_at=datetime.now(timezone.utc),
+            age_hours=24.0,
+            inactive_days=1.0,
+            comments_total=0,
+            review_comments_total=0,
+            comments_24h=0,
+            comments_7d=0,
+            reviews_24h=0,
+            reviews_7d=0,
+            commits=4,
+            changed_files=9,
+            additions=120,
+            deletions=20,
+            diff_size=140,
+            has_prior_review_activity=False,
+            has_prior_deep_review=False,
+            rule_reasons=[],
+            body="Test body",
+            html_url="https://example.com/pr/77",
+        )
+    ]
+
+    # Use the internal helper to build the batch prompt (it calls _load_skill_prompt internally)
+    from polaris_pr_intel.llm.adapters import _build_attention_batch_prompt
+
+    skill_prompt = adapter._load_skill_prompt(adapter.analysis_skill_file)
+    batch_prompt = _build_attention_batch_prompt(skill_prompt, contexts)
+
+    assert "Apache Polaris Attention Analysis Skill" in batch_prompt
+    assert "Rank PRs for attention." in batch_prompt
+    assert "Apache Polaris PR Review Skill" not in batch_prompt
+    assert "Check code correctness." not in batch_prompt
+
+
+def test_codex_local_adapter_review_prompt_uses_review_skill_only(tmp_path) -> None:
+    """Verify that PR review prompts include review skill and NOT analysis skill for Codex."""
+    review_skill_file = tmp_path / "review-skill.md"
+    review_skill_file.write_text(
+        "---\nname: polaris-pr-review\ndescription: x\n---\n# Apache Polaris PR Review Skill\n\nCheck code correctness.",
+        encoding="utf-8",
+    )
+    analysis_skill_file = tmp_path / "analysis-skill.md"
+    analysis_skill_file.write_text(
+        "---\nname: polaris-attention-analysis\ndescription: x\n---\n# Apache Polaris Attention Analysis Skill\n\nRank PRs for attention.",
+        encoding="utf-8",
+    )
+    adapter = CodexLocalAdapter(
+        command="codex",
+        review_skill_file=str(review_skill_file),
+        analysis_skill_file=str(analysis_skill_file),
+    )
+
+    # Test single-aspect review prompt
+    review_prompt = adapter._build_prompt("code-risk", "code risk and complexity", _pr())
+    assert "Use the following project skill as guidance." in review_prompt
+    assert "Apache Polaris PR Review Skill" in review_prompt
+    assert "Check code correctness." in review_prompt
+    assert "Apache Polaris Attention Analysis Skill" not in review_prompt
+    assert "Rank PRs for attention." not in review_prompt
+
+    # Test comprehensive review prompt
+    comprehensive_prompt = adapter._build_comprehensive_prompt(_pr())
+    assert "Apache Polaris PR Review Skill" in comprehensive_prompt
+    assert "Check code correctness." in comprehensive_prompt
+    assert "Apache Polaris Attention Analysis Skill" not in comprehensive_prompt
+    assert "Rank PRs for attention." not in comprehensive_prompt
+
+
+def test_codex_local_adapter_catalog_prompt_uses_analysis_skill_only(tmp_path) -> None:
+    """Verify that catalog routing prompts include analysis skill and NOT review skill for Codex."""
+    review_skill_file = tmp_path / "review-skill.md"
+    review_skill_file.write_text(
+        "---\nname: polaris-pr-review\ndescription: x\n---\n# Apache Polaris PR Review Skill\n\nCheck code correctness.",
+        encoding="utf-8",
+    )
+    analysis_skill_file = tmp_path / "analysis-skill.md"
+    analysis_skill_file.write_text(
+        "---\nname: polaris-attention-analysis\ndescription: x\n---\n# Apache Polaris Attention Analysis Skill\n\nRank PRs for attention.",
+        encoding="utf-8",
+    )
+    adapter = CodexLocalAdapter(
+        command="codex",
+        review_skill_file=str(review_skill_file),
+        analysis_skill_file=str(analysis_skill_file),
+    )
+
+    catalog_prompt = adapter._build_catalog_prompt(_pr())
+    assert "Apache Polaris Attention Analysis Skill" in catalog_prompt
+    assert "Rank PRs for attention." in catalog_prompt
+    assert "Apache Polaris PR Review Skill" not in catalog_prompt
+    assert "Check code correctness." not in catalog_prompt
