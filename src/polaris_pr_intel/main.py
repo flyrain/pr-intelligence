@@ -8,7 +8,7 @@ import uvicorn
 from polaris_pr_intel.api.app import create_app
 from polaris_pr_intel.agents.pr_reviewer import PRSubagentReviewer
 from polaris_pr_intel.config import load_settings
-from polaris_pr_intel.github.client import GitHubClient
+from polaris_pr_intel.github.async_client import GitHubClientWrapper
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
@@ -47,7 +47,7 @@ def build_runtime():
     llm = build_llm_adapter(settings)
     logger.info("Configured LLM provider: %s", _llm_display(llm.provider, llm.model))
     reviewer = PRSubagentReviewer(llm, enable_self_review=settings.enable_self_review)
-    gh = GitHubClient(settings.github_token, settings.github_owner, settings.github_repo)
+    gh = GitHubClientWrapper(settings.github_token, settings.github_owner, settings.github_repo)
     snapshot_ingestor = SnapshotIngestor(gh, repo)
     event_graph = EventGraph(repo, settings=settings)
     daily_graph = DailyReportGraph(repo, llm=llm, settings=settings)
