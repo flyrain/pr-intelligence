@@ -274,3 +274,23 @@ class GitHubClientWrapper:
                 await client.close()
 
         return asyncio.run(_run())
+
+    def get_pull_request_diff(self, number: int, max_chars: int = 120_000) -> str:
+        async def _run():
+            client = AsyncGitHubClient(self._token, self._owner, self._repo)
+            try:
+                return await client.get_pull_request_diff(number, max_chars)
+            finally:
+                await client.close()
+
+        return asyncio.run(_run())
+
+    def get_pull_request_activity_metrics(self, number: int) -> dict[str, int]:
+        async def _run():
+            client = AsyncGitHubClient(self._token, self._owner, self._repo)
+            try:
+                return await client.get_pull_request_activity_metrics(number)
+            finally:
+                await client.close()
+
+        return asyncio.run(_run())
