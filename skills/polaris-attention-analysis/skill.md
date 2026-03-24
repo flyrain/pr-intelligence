@@ -9,7 +9,7 @@ Use this skill for post-sync triage, attention ranking, report generation, and q
 
 ## When This Skill Applies
 
-Use when the task is not "review this one PR", but instead:
+Use when:
 - rank multiple PRs for attention
 - decide what belongs in `Review Now`
 - build daily or attention reports
@@ -21,6 +21,7 @@ Use when the task is not "review this one PR", but instead:
 ### Review Now
 - Prioritize PRs that changed recently and are still actively moving
 - Prefer PRs with clear ongoing review activity in the last 24h or 7d
+- Prefer PRs changed after it was reviewed by the target reviewer (`requested-you`)
 - Prefer PRs explicitly waiting on the target reviewer (`requested-you`) when they are still active
 - Prefer unreviewed PRs over PRs that already show prior review attention, unless current activity is high
 - Draft PRs are lower priority and usually should not appear in `Review Now`
@@ -28,7 +29,7 @@ Use when the task is not "review this one PR", but instead:
 ### Defer For Now
 - If a PR has not changed for a long time, do not put it in `Review Now`
 - Long-stale PRs belong in an aging or nudge section instead of the immediate attention queue
-- If a PR was already reviewed and has not changed recently, deprioritize it heavily
+- If a PR was already reviewed by the target reviewer (`requested-you`) and has not changed recently, deprioritize it heavily
 
 ### Relative Ranking
 - Compare PRs against each other, not independently
