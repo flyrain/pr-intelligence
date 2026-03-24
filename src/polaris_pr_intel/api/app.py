@@ -954,7 +954,7 @@ def create_app(
         </article>
         <article class="card" style="margin-top: 14px;">
           <details class="tab-fold">
-            <summary>New/Updated PRs Today</summary>
+            <summary>New/Updated PRs Today ({len(new_updated_rows)})</summary>
             <table>
               <thead><tr><th>PR</th><th>Title</th><th>Updated</th><th>Action</th></tr></thead>
               <tbody>{''.join(visible_new_updated_rows) if new_updated_rows else '<tr><td colspan="4">No PR updates observed today.</td></tr>'}</tbody>
