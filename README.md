@@ -11,32 +11,11 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 - **Activity trend tracking** highlights bursts like "5 comments in last 24h" on active PRs
 - **Configurable thresholds** let you tune what qualifies as "needs review"
 - **Target reviewer tracking**: automatically highlight PRs assigned to specific team members
-- **Deterministic scoring**: consistent prioritization across syncs
 
 ### 🤖 Multi-Provider LLM Support
 - **Local CLI providers**: Claude Code, Codex (code-aware with local repo context)
-- **Cloud providers**: Anthropic, OpenAI, Gemini
-- **Heuristic fallback**: deterministic output when LLM unavailable
 - **Custom skills**: separate prompts for deep PR reviews vs. batch report analysis
 - **Multi-step self-review**: optional 3-step critique-and-revise process for higher quality reviews (see [below](#self-review-feature-experimental))
-
-### 📊 Automated Reporting & Analysis
-- **Daily reports** with attention-focused summaries highlighting PRs and issues needing attention
-- **Catalog routing** for specialized PR categories (architecture, security, performance, etc.)
-- **Batch LLM analysis** processes multiple PRs efficiently in a single call
-- **Structured artifacts** accessible via REST API for integration with other tools
-- **Single source of truth**: `analysis_runs` are persisted; markdown reports are rendered from the latest persisted analysis run
-
-### ⚡ Scalable Async Processing
-- **In-memory job queue** with configurable worker count for parallel PR review processing
-- **Job deduplication**: prevents duplicate reviews for the same PR
-- **Timeout protection**: auto-fails stuck jobs after configurable duration
-- **Status tracking**: monitor queued/running/completed jobs via API
-
-### 🔗 GitHub Integration
-- **Read-only REST API** for safe data syncing
-- **Webhook support** for real-time event processing
-- **Complete workflow**: single `/refresh` endpoint handles all updates
 
 ## Quick Start
 
