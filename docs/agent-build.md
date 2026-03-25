@@ -38,6 +38,8 @@ Relevant code:
 - `src/polaris_pr_intel/graphs/daily_report_graph.py`
 - `src/polaris_pr_intel/graphs/pr_review_graph.py`
 
+These graphs should stay responsible for workflow execution, not for deciding how work gets triggered.
+
 ### Decision Layer
 
 LLMs are used for judgment-heavy steps, not for owning system state.
@@ -72,6 +74,34 @@ Relevant code:
 - `src/polaris_pr_intel/store/sqlite_repository.py`
 - `src/polaris_pr_intel/store/repository.py`
 
+## Triggering vs Orchestration
+
+This repo should keep agent triggering separate from agent orchestration.
+
+Triggering is about how work starts:
+
+- API request
+- webhook event
+- scheduler tick
+- CLI command
+- future chatbot request
+
+Orchestration is about how work runs once started:
+
+- step ordering
+- routing
+- retries or fallbacks
+- aggregation
+- persistence
+
+For this codebase, the intended split is:
+
+- trigger layer decides `run now`, `enqueue`, `deduplicate`, or `ignore`
+- graph layer executes the workflow
+- repository stores the result
+
+This matters because the same workflows should be reusable from multiple front doors. A chatbot should trigger the same backend flows as the API, not introduce a parallel execution path.
+
 ## What To Keep In Mind
 
 The simplified idea `agent = loop + tools` is useful, but incomplete for this repo.
@@ -96,7 +126,8 @@ A chatbot fits well here, but only as a control surface.
 Recommended shape:
 
 - chatbot = conversational front door
-- existing API and graphs = execution layer
+- trigger layer = request handling and job start policy
+- existing graphs = execution layer
 - repository = source of truth
 
 Good chatbot responsibilities:
@@ -112,6 +143,7 @@ The chatbot should call the same backend operations that the UI and CLI use. It 
 ## Design Rules
 
 - Keep LLMs responsible for judgment, not persistence.
+- Keep triggering separate from orchestration.
 - Keep orchestration in graphs or explicit workflow code.
 - Keep repository state as the canonical record.
 - Prefer bounded steps over open-ended conversations.
