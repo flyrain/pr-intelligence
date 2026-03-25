@@ -8,7 +8,34 @@ Useful mental model:
 
 In this codebase, that loop is split across a few bounded workflows instead of one open-ended agent.
 
-## Core Shape
+## High-Level Diagram
+
+```mermaid
+flowchart LR
+    GH["GitHub Webhook / Sync"] --> TR["Trigger Layer"]
+    API["API / CLI"] --> TR
+    CRON["Scheduler / Cron"] --> TR
+    CHAT["Chatbot / ChatOps"] --> TR
+
+    TR --> ORCH["Workflow Orchestrators"]
+
+    ORCH --> WF1["WebhookWorkflow"]
+    ORCH --> WF2["RefreshWorkflow"]
+    ORCH --> WF3["PRReviewWorkflow"]
+
+    WF1 --> DEC["Decision Steps"]
+    WF2 --> DEC
+    WF3 --> DEC
+
+    DEC --> LLM["LLM Adapters"]
+    DEC --> TOOLS["GitHub / Local Tools"]
+
+    WF1 --> REPO["Repository / State Store"]
+    WF2 --> REPO
+    WF3 --> REPO
+
+    REPO --> OUT["Reports / Queues / Review Results / Status"]
+```
 
 ### Inputs
 
@@ -17,6 +44,7 @@ The system is driven by:
 - GitHub sync and webhook ingestion
 - API requests
 - scheduled refresh jobs
+- future chatbot or ChatOps requests
 
 Relevant code:
 
@@ -39,6 +67,38 @@ Relevant code:
 - `src/polaris_pr_intel/graphs/pr_review_graph.py`
 
 These graphs should stay responsible for workflow execution, not for deciding how work gets triggered.
+
+The better abstraction is a workflow orchestrator, not a generic "agent manager".
+
+Each orchestrator should:
+
+- accept a typed request
+- load the minimum required state
+- run a bounded sequence of steps
+- persist typed outputs
+- return a typed result
+
+Each orchestrator should not own:
+
+- trigger policy
+- transport concerns
+- chat UX
+- provider-specific CLI details
+
+For this repo, a good target shape is:
+
+- `RefreshWorkflow`
+- `PRReviewWorkflow`
+- `WebhookWorkflow`
+
+with a shared pattern like:
+
+- `WorkflowRequest`
+- `WorkflowContext`
+- `WorkflowResult`
+- ordered workflow steps
+
+The important point is that the workflow contract is the architecture. LangGraph is only one possible execution engine for that contract.
 
 ### Decision Layer
 
@@ -84,7 +144,7 @@ Triggering is about how work starts:
 - webhook event
 - scheduler tick
 - CLI command
-- future chatbot request
+- chatbot or ChatOps request
 
 Orchestration is about how work runs once started:
 
@@ -102,6 +162,48 @@ For this codebase, the intended split is:
 
 This matters because the same workflows should be reusable from multiple front doors. A chatbot should trigger the same backend flows as the API, not introduce a parallel execution path.
 
+Chatbot / ChatOps belongs in the trigger layer, alongside webhooks and scheduled jobs. It is another trigger source, not a separate execution subsystem.
+
+Typical chatbot responsibilities:
+
+- answer status questions from persisted state
+- explain why a PR is ranked highly
+- summarize the latest report or review
+- trigger refresh or review jobs through the same backend paths as other triggers
+- propose actions before executing them
+
+The chatbot should not keep private workflow state or duplicate backend business logic.
+
+## Recommended Orchestrator Abstraction
+
+The orchestrator should be modeled as a workflow runner with a small contract.
+
+Suggested shape:
+
+- trigger layer creates a typed workflow request
+- orchestrator runs ordered steps against a workflow context
+- steps call adapters, tools, and repository methods
+- orchestrator persists outputs and returns a typed result
+
+That means intelligence lives inside specific decision steps, while the orchestrator owns only flow control.
+
+Examples of workflow steps:
+
+- `LoadPRStep`
+- `FetchDiffStep`
+- `AnalyzeAttentionStep`
+- `AggregateReviewStep`
+- `PersistReportStep`
+
+This gives the repo a cleaner separation:
+
+- triggering decides when work starts
+- orchestration decides how work runs
+- adapters decide how model/tool calls happen
+- repository decides how state is stored
+
+This also keeps the codebase from being overly coupled to LangGraph. The graph can remain the execution mechanism, but it should not be the primary abstraction exposed to the rest of the system.
+
 ## What To Keep In Mind
 
 The simplified idea `agent = loop + tools` is useful, but incomplete for this repo.
@@ -118,27 +220,6 @@ Examples:
 - refresh: sync -> score -> analyze -> report
 - review: fetch PR if needed -> review -> aggregate -> persist
 - webhook: ingest event -> route by type -> score or summarize
-
-## Chatbot / ChatOps
-
-A chatbot fits well here, but only as a control surface.
-
-Recommended shape:
-
-- chatbot = conversational front door
-- trigger layer = request handling and job start policy
-- existing graphs = execution layer
-- repository = source of truth
-
-Good chatbot responsibilities:
-
-- answer status questions from persisted state
-- explain why a PR is ranked highly
-- summarize the latest report or review
-- trigger refresh or review jobs through existing APIs
-- propose actions before executing them
-
-The chatbot should call the same backend operations that the UI and CLI use. It should not keep private workflow state or duplicate backend business logic.
 
 ## Design Rules
 
