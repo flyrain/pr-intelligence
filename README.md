@@ -4,6 +4,10 @@ An intelligent GitHub repository monitoring service that leverages LangGraph and
 
 License: Apache-2.0. See [LICENSE](LICENSE).
 
+## Architecture Notes
+
+- [Agent Build](docs/agent-build.md) explains the repo as a real agent workflow system, including how a future chatbot or ChatOps front end should fit on top of the existing graphs and APIs.
+
 ## Key Features
 
 ### 🎯 Intelligent PR Prioritization
@@ -15,7 +19,7 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 ### 🤖 Multi-Provider LLM Support
 - **Local CLI providers**: Claude Code, Codex (code-aware with local repo context)
 - **Custom skills**: separate prompts for deep PR reviews vs. batch report analysis
-- **Multi-step self-review**: optional 3-step critique-and-revise process for higher quality reviews (see [below](#self-review-feature-experimental))
+- **Optional self-review**: local CLI providers can run a 3-step critique-and-revise review flow for higher quality results (see [below](#self-review-feature-experimental))
 
 ## Quick Start
 
@@ -135,8 +139,8 @@ PORT=9090 ./run.sh serve
 - `SQLITE_PATH` (default: `.data/polaris_pr_intel.db`)
 - `REVIEW_JOB_WORKERS` (default: `1`; number of parallel async PR review workers. Increase for higher concurrency.)
 - `REVIEW_JOB_TIMEOUT_SEC` (default: `1200`; max time in seconds for a review job before marking as failed)
-- `ANALYSIS_TOP_SLICE_LIMIT` (default: `10`; number of top PRs sent to the report-analysis LLM per analysis run)
-- `ENABLE_SELF_REVIEW` (default: `true`; enable 3-step self-review process for PR reviews. See [Self-Review Feature](#self-review-feature-experimental) below.)
+- `ANALYSIS_TOP_SLICE_LIMIT` (default: `10`; reserved for future slicing logic and currently not used by `DerivedAnalysisAgent`)
+- `ENABLE_SELF_REVIEW` (default: `true`; enable the 3-step self-review process for PR reviews on local CLI providers. See [Self-Review Feature](#self-review-feature-experimental) below.)
 - `ENABLE_PERIODIC_REFRESH` (default: `true`; enable automatic periodic refresh scheduler)
 - `REFRESH_INTERVAL_HOURS` (default: `2`; hours between automatic refreshes)
 
@@ -231,10 +235,12 @@ This separation allows:
 ## Self-Review Feature (Experimental)
 
 The service includes an optional **multi-step self-review** capability that improves PR review quality through LLM critique and revision.
+This path is implemented by the local CLI adapters (`claude_code_local` and `codex_local`).
+The heuristic adapter, and the API-named placeholder adapters that currently inherit from it, fall back to a single-pass comprehensive review instead of the 3-step flow.
 
 ### How It Works
 
-By default, PR reviews use a 3-step self-review process:
+When enabled on a local CLI adapter, PR reviews use a 3-step self-review process:
 
 1. **Generate** - LLM produces initial review findings (same as normal)
 2. **Critique** - LLM examines its own findings against quality criteria:
@@ -244,7 +250,7 @@ By default, PR reviews use a 3-step self-review process:
    - **Clarity**: Is language clear and concise without hedging?
 3. **Revise** - LLM regenerates findings addressing the critique issues
 
-Each step is a separate LLM invocation. If critique or revision fails, the system gracefully falls back to the initial findings.
+Each step is a separate LLM invocation. If critique or revision fails, the system falls back to the initial findings.
 
 ### When to Use
 
@@ -272,8 +278,8 @@ ENABLE_SELF_REVIEW=true ./run.sh serve
 
 ### Performance Impact
 
-- **Latency**: ~3x baseline (15-30s → 45-90s per review)
-- **Cost**: ~3x token usage (3 separate LLM calls)
+- **Latency**: roughly 3x baseline for local CLI providers
+- **Cost**: roughly 3x token usage for local CLI providers
 - **Quality**: Significantly improved specificity, coverage, and consistency
 
 ### Monitoring
@@ -320,8 +326,10 @@ Look for improvements in:
 
 - Adapter layer is provider-agnostic.
 - Local providers (`claude_code_local`, `codex_local`) use your local repo path for code-aware analysis.
+- The local providers are the only adapters that currently execute real external LLM/tooling calls.
+- The `openai`, `gemini`, and `anthropic` adapters currently inherit heuristic behavior rather than calling those hosted APIs directly.
 - Individual PR review and post-sync report analysis intentionally use different prompt paths and different skills.
-- Post-sync report analysis batches the top PR slice into one LLM call instead of one call per PR.
+- Post-sync report analysis batches the current open PR set into one LLM call instead of one call per PR.
 - If CLI execution fails or output parsing fails, adapters fall back to deterministic heuristic output.
 - Async review jobs are queued in-memory (not persisted).
 - Repeated async requests for the same PR while a job is `queued`/`running` are deduplicated and return the existing `job_id` (`deduplicated: true`).
@@ -432,7 +440,6 @@ src/polaris_pr_intel/
 │   ├── issue_insight.py       # Issue priority scoring
 │   ├── pr_reviewer.py         # Deep PR review orchestration
 │   ├── derived_analysis.py    # Post-sync batch analysis
-│   └── daily_reporter.py      # Report compilation
 ├── llm/              # Provider-agnostic LLM adapter layer
 │   ├── base.py                # LLM interface
 │   ├── adapters.py            # Claude Code, Codex, API providers
@@ -452,7 +459,7 @@ tests/                         # Test suite (pytest)
 
 ```mermaid
 flowchart LR
-    GH["GitHub (Webhooks + REST API)"] --> API["FastAPI API Layer<br/>/webhooks, /sync, /reports, /queues"]
+    GH["GitHub (Webhooks + REST API)"] --> API["FastAPI API Layer<br/>/webhooks, /refresh, /reports, /queues"]
     CLI["CLI (polaris-pr-intel)"] --> API
     API --> EG["EventGraph (LangGraph)<br/>ingest -> route -> summarize/score"]
     API --> DG["DailyReportGraph (LangGraph)<br/>analyze -> publish"]
