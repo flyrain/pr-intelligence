@@ -244,7 +244,7 @@ def create_app(
             run_times = [job.next_run_time for job in refresh_jobs if job is not None and job.next_run_time is not None]
             if run_times:
                 next_refresh_at = min(run_times)
-            elif periodic_refresh_enabled:
+            if periodic_refresh_enabled and (next_refresh_at is None or next_refresh_at <= now_utc):
                 next_refresh_at = next_periodic_refresh_at(
                     now_utc,
                     app_settings.refresh_timezone,

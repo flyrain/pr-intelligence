@@ -114,6 +114,25 @@ class _DummyPRReviewGraph:
         return {"notifications": [f"pr-review:{pr_number}"], "errors": []}
 
 
+class _DummySchedulerJob:
+    def __init__(self, job_id: str, next_run_time: datetime | None) -> None:
+        self.id = job_id
+        self.next_run_time = next_run_time
+
+
+class _DummySchedulerBackend:
+    def __init__(self, jobs: list[_DummySchedulerJob]) -> None:
+        self._jobs = jobs
+
+    def get_jobs(self) -> list[_DummySchedulerJob]:
+        return list(self._jobs)
+
+
+class _DummyScheduler:
+    def __init__(self, jobs: list[_DummySchedulerJob]) -> None:
+        self.scheduler = _DummySchedulerBackend(jobs)
+
+
 def _client(settings: Settings | None = None) -> tuple[TestClient, InMemoryRepository, _DummyIngestor, _DummyPRReviewGraph]:
     repo = InMemoryRepository()
     ingestor = _DummyIngestor()
@@ -1272,3 +1291,23 @@ def test_ui_without_scheduler_does_not_invent_next_refresh() -> None:
 
     assert resp.status_code == 200
     assert 'id="next-refresh-countdown" data-remaining-seconds=""' in resp.text
+
+
+def test_ui_recomputes_next_refresh_when_scheduler_run_time_is_stale() -> None:
+    stale_next_run = datetime.now(timezone.utc) - timedelta(minutes=2)
+    scheduler = _DummyScheduler([_DummySchedulerJob("periodic-refresh-1200", stale_next_run)])
+    repo = InMemoryRepository()
+    app = create_app(
+        repo,
+        _DummyEventGraph(),
+        _DummyDailyGraph(repo),
+        pr_review_graph=_DummyPRReviewGraph(repo),
+        snapshot_ingestor=_DummyIngestor(),
+        settings=Settings(github_token="", enable_periodic_refresh=True),
+        scheduler=scheduler,
+    )
+
+    resp = TestClient(app).get("/ui")
+
+    assert resp.status_code == 200
+    assert 'id="next-refresh-countdown" data-remaining-seconds="0"' not in resp.text
