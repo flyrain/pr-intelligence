@@ -10,6 +10,7 @@ from polaris_pr_intel.api.app import create_app
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.github.client import GitHubClient
 from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, IssueSignal, PRAttentionDecision, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
+from polaris_pr_intel.scheduler.daily import next_periodic_refresh_at
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.store.sqlite_repository import SQLiteRepository
 
@@ -1246,3 +1247,28 @@ def test_refresh_endpoint() -> None:
 
     # Verify ingestor was called correctly
     assert ingestor.calls[0] == {"per_page": 100, "max_pages": 20, "since": None, "prune_missing_open_prs": True}
+
+
+def test_next_periodic_refresh_uses_half_hour_day_window() -> None:
+    now = datetime(2026, 3, 26, 22, 45, tzinfo=datetime.now().astimezone().tzinfo)
+
+    next_run = next_periodic_refresh_at(
+        now,
+        "",
+        interval_minutes=30,
+        start_hour_local=8,
+        end_hour_local=23,
+    )
+
+    assert next_run is not None
+    assert next_run.astimezone(now.tzinfo).hour == 23
+    assert next_run.astimezone(now.tzinfo).minute == 0
+
+
+def test_ui_without_scheduler_does_not_invent_next_refresh() -> None:
+    client, _, _, _ = _client(Settings(github_token="", enable_periodic_refresh=True))
+
+    resp = client.get("/ui")
+
+    assert resp.status_code == 200
+    assert 'id="next-refresh-countdown" data-remaining-seconds=""' in resp.text

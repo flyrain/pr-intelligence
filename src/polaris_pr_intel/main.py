@@ -59,7 +59,10 @@ def build_runtime():
         review_need_agent=event_graph.review_need,
         issue_insight_agent=event_graph.issue_insight,
         enable_periodic_refresh=settings.enable_periodic_refresh,
-        refresh_interval_hours=settings.refresh_interval_hours,
+        refresh_timezone=settings.refresh_timezone,
+        refresh_interval_minutes=settings.refresh_interval_minutes,
+        refresh_start_hour_local=settings.refresh_start_hour_local,
+        refresh_end_hour_local=settings.refresh_end_hour_local,
     )
     app = create_app(
         repo,

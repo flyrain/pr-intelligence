@@ -6,7 +6,7 @@ import json
 import os
 import queue as queue_module
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from html import escape
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -24,6 +24,7 @@ from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
 from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, QueueItem
+from polaris_pr_intel.scheduler.daily import next_periodic_refresh_at
 from polaris_pr_intel.store.base import Repository
 
 if TYPE_CHECKING:
@@ -237,11 +238,20 @@ def create_app(
         next_refresh_at: datetime | None = None
         periodic_refresh_enabled = bool(app_settings.enable_periodic_refresh)
         if scheduler is not None:
-            refresh_job = scheduler.scheduler.get_job("periodic-refresh")
-            if refresh_job is not None:
-                next_refresh_at = refresh_job.next_run_time
-        if next_refresh_at is None and periodic_refresh_enabled and repo.last_sync_at:
-            next_refresh_at = repo.last_sync_at + timedelta(hours=app_settings.refresh_interval_hours)
+            refresh_jobs = [
+                job for job in scheduler.scheduler.get_jobs() if job.id.startswith("periodic-refresh-")
+            ]
+            run_times = [job.next_run_time for job in refresh_jobs if job is not None and job.next_run_time is not None]
+            if run_times:
+                next_refresh_at = min(run_times)
+            elif periodic_refresh_enabled:
+                next_refresh_at = next_periodic_refresh_at(
+                    now_utc,
+                    app_settings.refresh_timezone,
+                    app_settings.refresh_interval_minutes,
+                    app_settings.refresh_start_hour_local,
+                    app_settings.refresh_end_hour_local,
+                )
         seconds_until_next_refresh: int | None = None
         if next_refresh_at is not None:
             seconds_until_next_refresh = max(0, int((next_refresh_at - now_utc).total_seconds()))
@@ -250,7 +260,9 @@ def create_app(
             "last_sync_at": repo.last_sync_at.isoformat() if repo.last_sync_at else None,
             "next_refresh_at": next_refresh_at.isoformat() if next_refresh_at else None,
             "seconds_until_next_refresh": seconds_until_next_refresh,
-            "refresh_interval_hours": app_settings.refresh_interval_hours,
+            "refresh_interval_minutes": app_settings.refresh_interval_minutes,
+            "refresh_start_hour_local": app_settings.refresh_start_hour_local,
+            "refresh_end_hour_local": app_settings.refresh_end_hour_local,
         }
 
     @app.get("/")

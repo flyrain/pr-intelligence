@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import pytest
 
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.main import _configure_logging, build_runtime
@@ -39,7 +40,7 @@ def test_build_runtime_logs_configured_llm(monkeypatch, caplog) -> None:
     )
     monkeypatch.setattr("polaris_pr_intel.main._build_repository", lambda *args, **kwargs: InMemoryRepository())
     monkeypatch.setattr("polaris_pr_intel.main.build_llm_adapter", lambda settings: _DummyLLM())
-    monkeypatch.setattr("polaris_pr_intel.main.GitHubClient", _DummyGitHubClient)
+    monkeypatch.setattr("polaris_pr_intel.main.GitHubClientWrapper", _DummyGitHubClient)
     monkeypatch.setattr("polaris_pr_intel.main.DailyScheduler", _DummyScheduler)
 
     caplog.set_level(logging.INFO)
@@ -81,6 +82,27 @@ def test_self_review_defaults_enabled(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.enable_self_review is True
+
+
+def test_periodic_refresh_defaults_match_daytime_half_hour_schedule(monkeypatch) -> None:
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
+    monkeypatch.delenv("REFRESH_INTERVAL_MINUTES", raising=False)
+    monkeypatch.delenv("REFRESH_START_HOUR_LOCAL", raising=False)
+    monkeypatch.delenv("REFRESH_END_HOUR_LOCAL", raising=False)
+
+    settings = load_settings()
+
+    assert settings.refresh_interval_minutes == 30
+    assert settings.refresh_start_hour_local == 8
+    assert settings.refresh_end_hour_local == 23
+
+
+def test_refresh_window_hours_must_be_valid(monkeypatch) -> None:
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
+    monkeypatch.setenv("REFRESH_START_HOUR_LOCAL", "24")
+
+    with pytest.raises(RuntimeError, match="REFRESH_START_HOUR_LOCAL must be between 0 and 23"):
+        load_settings()
 
 
 def test_load_settings_accepts_legacy_github_token(monkeypatch) -> None:

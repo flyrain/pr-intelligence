@@ -142,7 +142,10 @@ PORT=9090 ./run.sh serve
 - `ANALYSIS_TOP_SLICE_LIMIT` (default: `10`; reserved for future slicing logic and currently not used by `DerivedAnalysisAgent`)
 - `ENABLE_SELF_REVIEW` (default: `true`; enable the 3-step self-review process for PR reviews on local CLI providers. See [Self-Review Feature](#self-review-feature-experimental) below.)
 - `ENABLE_PERIODIC_REFRESH` (default: `true`; enable automatic periodic refresh scheduler)
-- `REFRESH_INTERVAL_HOURS` (default: `2`; hours between automatic refreshes)
+- `REFRESH_TIMEZONE` (optional; IANA timezone for the automatic refresh window, for example `America/Los_Angeles`. Defaults to the system local timezone.)
+- `REFRESH_INTERVAL_MINUTES` (default: `30`; minutes between automatic refreshes during the local refresh window)
+- `REFRESH_START_HOUR_LOCAL` (default: `8`; first local hour included in the automatic refresh window)
+- `REFRESH_END_HOUR_LOCAL` (default: `23`; last local top-of-hour refresh in the automatic refresh window)
 
 ### LLM provider selection
 - `LLM_PROVIDER` (default: `claude_code_local`)

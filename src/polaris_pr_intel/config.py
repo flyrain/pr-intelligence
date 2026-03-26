@@ -44,7 +44,10 @@ class Settings:
     codex_max_turns: int = 15
     analysis_top_slice_limit: int = 10
     enable_periodic_refresh: bool = True
-    refresh_interval_hours: int = 2
+    refresh_timezone: str = ""
+    refresh_interval_minutes: int = 30
+    refresh_start_hour_local: int = 8
+    refresh_end_hour_local: int = 23
     enable_self_review: bool = True
 
 
@@ -67,6 +70,12 @@ def _int_env(name: str, default: int) -> int:
     except ValueError as exc:
         raise RuntimeError(f"{name} must be an int") from exc
 
+
+def _hour_env(name: str, default: int) -> int:
+    value = _int_env(name, default)
+    if not 0 <= value <= 23:
+        raise RuntimeError(f"{name} must be between 0 and 23")
+    return value
 
 
 def load_settings() -> Settings:
@@ -136,6 +145,9 @@ def load_settings() -> Settings:
         codex_max_turns=_int_env("CODEX_MAX_TURNS", 15),
         analysis_top_slice_limit=_int_env("ANALYSIS_TOP_SLICE_LIMIT", 10),
         enable_periodic_refresh=os.getenv("ENABLE_PERIODIC_REFRESH", "true").lower() in ("true", "1", "yes"),
-        refresh_interval_hours=_int_env("REFRESH_INTERVAL_HOURS", 2),
+        refresh_timezone=os.getenv("REFRESH_TIMEZONE", "").strip(),
+        refresh_interval_minutes=_int_env("REFRESH_INTERVAL_MINUTES", 30),
+        refresh_start_hour_local=_hour_env("REFRESH_START_HOUR_LOCAL", 8),
+        refresh_end_hour_local=_hour_env("REFRESH_END_HOUR_LOCAL", 23),
         enable_self_review=os.getenv("ENABLE_SELF_REVIEW", "true").lower() in ("true", "1", "yes"),
     )
