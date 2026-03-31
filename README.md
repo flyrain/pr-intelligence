@@ -1,6 +1,6 @@
 # PR Intelligence
 
-An intelligent GitHub repository monitoring service that leverages LangGraph and LLM agents to automate PR review prioritization, issue tracking, and daily reporting. Originally built for Apache Polaris, but configurable for any GitHub repository.
+An intelligent GitHub repository monitoring service that leverages LangGraph and LLM agents to automate PR review prioritization, issue tracking, and refresh-driven reporting. Originally built for Apache Polaris, but configurable for any GitHub repository.
 
 License: Apache-2.0. See [LICENSE](LICENSE).
 
@@ -449,7 +449,7 @@ src/polaris_pr_intel/
 │   └── factory.py             # Provider instantiation
 ├── store/            # Repository layer (SQLite + in-memory)
 ├── scoring/          # Deterministic scoring rules
-├── scheduler/        # APScheduler daily job scheduling
+├── scheduler/        # APScheduler periodic refresh scheduling
 ├── config.py         # Environment-based configuration
 └── main.py           # CLI entrypoint
 
@@ -485,7 +485,7 @@ flowchart LR
     API --> STORE
     API --> PRG
 
-    SCHED["DailyScheduler (APScheduler)"] --> DG
+    SCHED["PeriodicRefreshScheduler (APScheduler)"] --> DG
 ```
 
 ## Development

@@ -10,7 +10,7 @@ from polaris_pr_intel.api.app import create_app
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.github.client import GitHubClient
 from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, IssueSignal, PRAttentionDecision, PRReviewReport, PRSubagentFinding, PullRequestSnapshot, ReportArtifact, ReviewSignal
-from polaris_pr_intel.scheduler.daily import next_periodic_refresh_at
+from polaris_pr_intel.scheduler.periodic import next_periodic_refresh_at
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.store.sqlite_repository import SQLiteRepository
 

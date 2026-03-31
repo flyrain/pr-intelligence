@@ -5,7 +5,7 @@ import pytest
 
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.main import _configure_logging, build_runtime
-from polaris_pr_intel.scheduler.daily import DailyScheduler
+from polaris_pr_intel.scheduler.periodic import PeriodicRefreshScheduler
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.config import load_settings
 
@@ -42,7 +42,7 @@ def test_build_runtime_logs_configured_llm(monkeypatch, caplog) -> None:
     monkeypatch.setattr("polaris_pr_intel.main._build_repository", lambda *args, **kwargs: InMemoryRepository())
     monkeypatch.setattr("polaris_pr_intel.main.build_llm_adapter", lambda settings: _DummyLLM())
     monkeypatch.setattr("polaris_pr_intel.main.GitHubClientWrapper", _DummyGitHubClient)
-    monkeypatch.setattr("polaris_pr_intel.main.DailyScheduler", _DummyScheduler)
+    monkeypatch.setattr("polaris_pr_intel.main.PeriodicRefreshScheduler", _DummyScheduler)
 
     caplog.set_level(logging.INFO)
     build_runtime()
@@ -125,7 +125,7 @@ def test_load_settings_prefers_project_specific_token(monkeypatch) -> None:
 
 
 def test_scheduler_registers_only_periodic_refresh_jobs() -> None:
-    scheduler = DailyScheduler(
+    scheduler = PeriodicRefreshScheduler(
         graph=object(),
         snapshot_ingestor=object(),
         repo=object(),

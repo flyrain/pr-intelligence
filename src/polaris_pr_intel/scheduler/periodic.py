@@ -91,7 +91,7 @@ def next_periodic_refresh_at(
     return min(candidates) if candidates else None
 
 
-class DailyScheduler:
+class PeriodicRefreshScheduler:
     def __init__(
         self,
         graph: DailyReportGraph,

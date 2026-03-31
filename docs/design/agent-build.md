@@ -50,7 +50,7 @@ Relevant code:
 
 - `src/polaris_pr_intel/ingest.py`
 - `src/polaris_pr_intel/api/app.py`
-- `src/polaris_pr_intel/scheduler/daily.py`
+- `src/polaris_pr_intel/scheduler/periodic.py`
 
 ### Orchestration
 

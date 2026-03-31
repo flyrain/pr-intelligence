@@ -25,11 +25,11 @@ from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
 from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, QueueItem
 from polaris_pr_intel.refresh import run_full_refresh
-from polaris_pr_intel.scheduler.daily import next_periodic_refresh_at
+from polaris_pr_intel.scheduler.periodic import next_periodic_refresh_at
 from polaris_pr_intel.store.base import Repository
 
 if TYPE_CHECKING:
-    from polaris_pr_intel.scheduler.daily import DailyScheduler
+    from polaris_pr_intel.scheduler.periodic import PeriodicRefreshScheduler
 
 
 def create_app(
@@ -40,7 +40,7 @@ def create_app(
     snapshot_ingestor: SnapshotIngestor,
     settings: Settings | None = None,
     webhook_secret: str = "",
-    scheduler: "DailyScheduler | None" = None,
+    scheduler: "PeriodicRefreshScheduler | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Polaris PR Intelligence")
 

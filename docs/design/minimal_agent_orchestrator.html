@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Minimal Agent Orchestrator Kernel</title>
+<style>
+body { font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }
+h1, h2, h3 { color: #2c3e50; }
+code, pre { background: #f4f4f4; padding: 6px; display: block; white-space: pre-wrap; }
+.section { margin-bottom: 30px; }
+</style>
+</head>
+<body>
+
+<h1>Minimal Agent Orchestrator Kernel (POC Design)</h1>
+
+<h2>Overview</h2>
+<p>This document describes a minimal agent orchestration kernel that separates work definition, control logic, and execution runtime. Agents are treated as stateless executors, while all durable state is maintained externally.</p>
+
+<h2>Design Goals</h2>
+<ul>
+<li>Durable task state independent of agent sessions</li>
+<li>Stateless, replaceable execution</li>
+<li>Simple, inspectable control loop</li>
+<li>Minimal abstractions</li>
+</ul>
+
+<h2>Core Principles</h2>
+<ul>
+<li>Externalized state</li>
+<li>Tasks over sessions</li>
+<li>Event-driven system</li>
+<li>Control plane separation</li>
+</ul>
+
+<h2>Core Abstractions</h2>
+
+<h3>Task</h3>
+<pre>{
+  "id": "task_123",
+  "title": "Implement login validation",
+  "status": "ready",
+  "input": {},
+  "owner": null,
+  "attempt_count": 0
+}</pre>
+
+<h3>TaskGroup</h3>
+<pre>{
+  "id": "group_1",
+  "title": "Auth feature",
+  "task_ids": ["task_123"],
+  "status": "active"
+}</pre>
+
+<h3>Event</h3>
+<pre>{
+  "id": "evt_1",
+  "task_id": "task_123",
+  "type": "task.started",
+  "timestamp": "...",
+  "payload": {}
+}</pre>
+
+<h3>Execution</h3>
+<pre>{
+  "id": "exec_1",
+  "task_id": "task_123",
+  "agent_id": "agent_1",
+  "runtime": "claude",
+  "status": "running"
+}</pre>
+
+<h2>Control Loop</h2>
+<pre>
+def tick():
+    tasks = task_store.find(status="ready")
+    for task in tasks:
+        assign_and_start(task)
+
+    executions = execution_store.active()
+    for exec in executions:
+        result = runtime.poll(exec.id)
+        handle_result(exec, result)
+</pre>
+
+<h2>State Model</h2>
+<pre>
+created → ready → running → completed
+                    ↓
+                blocked → ready
+                    ↓
+                  failed
+</pre>
+
+<h2>Persistence Model</h2>
+
+<h3>Tasks Table</h3>
+<pre>
+id, title, status, input, owner, attempt_count
+</pre>
+
+<h3>Executions Table</h3>
+<pre>
+id, task_id, agent_id, runtime, status
+</pre>
+
+<h3>Events Table</h3>
+<pre>
+id, task_id, type, timestamp, payload
+</pre>
+
+<h2>Key Invariants</h2>
+<ul>
+<li>Task state is authoritative</li>
+<li>Events are append-only</li>
+<li>Execution is replaceable</li>
+<li>Orchestrator is stateless</li>
+</ul>
+
+<h2>Summary</h2>
+<p>The kernel consists of Task, TaskGroup, EventLog, RuntimeAdapter, and Orchestrator. It enforces external state, stateless execution, and a policy-driven control loop.</p>
+
+</body>
+</html>

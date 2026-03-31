@@ -14,7 +14,7 @@ from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
 from polaris_pr_intel.llm.factory import build_llm_adapter
-from polaris_pr_intel.scheduler.daily import DailyScheduler
+from polaris_pr_intel.scheduler.periodic import PeriodicRefreshScheduler
 from polaris_pr_intel.store.base import Repository
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.store.sqlite_repository import SQLiteRepository
@@ -52,7 +52,7 @@ def build_runtime():
     event_graph = EventGraph(repo, settings=settings)
     daily_graph = DailyReportGraph(repo, llm=llm, settings=settings)
     pr_review_graph = PRReviewGraph(repo, reviewer=reviewer, gh=gh)
-    scheduler = DailyScheduler(
+    scheduler = PeriodicRefreshScheduler(
         daily_graph,
         snapshot_ingestor=snapshot_ingestor,
         repo=repo,
@@ -92,17 +92,11 @@ def main() -> None:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
 
-    sub.add_parser("run-daily", help="Generate one daily report")
-
     args = parser.parse_args()
-    app, daily_graph = build_runtime()
+    app, _daily_graph = build_runtime()
 
     if args.command == "serve":
         uvicorn.run(app, host=args.host, port=args.port)
-    elif args.command == "run-daily":
-        out = daily_graph.invoke()
-        notes = out.get("notifications", [])
-        print({"ok": True, "notifications": notes})
 
 
 if __name__ == "__main__":
