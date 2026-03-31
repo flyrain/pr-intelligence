@@ -24,6 +24,7 @@ from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
 from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, QueueItem
+from polaris_pr_intel.refresh import run_full_refresh
 from polaris_pr_intel.scheduler.daily import next_periodic_refresh_at
 from polaris_pr_intel.store.base import Repository
 
@@ -1045,54 +1046,25 @@ def create_app(
 
         This is the recommended endpoint for updating all intelligence data.
         """
-        # Step 1: Sync GitHub data
-        synced = snapshot_ingestor.sync_recent(
+        result = run_full_refresh(
+            snapshot_ingestor=snapshot_ingestor,
+            repo=repo,
+            review_need_agent=review_need_agent,
+            issue_insight_agent=issue_insight_agent,
+            daily_graph=daily_graph,
             per_page=per_page,
             max_pages=max_pages,
-            since=None,
             prune_missing_open_prs=prune_missing_open_prs,
         )
-
-        # Step 2: Recompute scores
-        prs_scored = 0
-        issues_scored = 0
-        needs_review = 0
-        interesting_issues = 0
-
-        for pr in repo.prs.values():
-            if pr.state != "open":
-                continue
-            signal = review_need_agent.run(pr)
-            repo.save_review_signal(signal)
-            prs_scored += 1
-            if signal.needs_review:
-                needs_review += 1
-
-        for issue in repo.issues.values():
-            if issue.state != "open":
-                continue
-            signal = issue_insight_agent.run(issue)
-            repo.save_issue_signal(signal)
-            issues_scored += 1
-            if signal.interesting:
-                interesting_issues += 1
-
-        # Step 3: Run analysis & generate report
-        out = daily_graph.invoke()
-        analysis_run = out.get("analysis_run")
+        analysis_run = result["analysis_run"]
 
         return {
-            "ok": True,
-            "synced": synced,
-            "scored": {
-                "prs": prs_scored,
-                "issues": issues_scored,
-                "needs_review": needs_review,
-                "interesting_issues": interesting_issues,
-            },
+            "ok": result["ok"],
+            "synced": result["synced"],
+            "scored": result["scored"],
             "analysis_run": analysis_run.model_dump() if analysis_run else None,
             "report": _report_payload(analysis_run),
-            "notifications": out.get("notifications", []),
+            "notifications": result["notifications"],
         }
 
     @app.post("/reviews/pr/{pr_number}/run")

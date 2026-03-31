@@ -10,6 +10,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
+from polaris_pr_intel.refresh import run_full_refresh
 
 if TYPE_CHECKING:
     from polaris_pr_intel.agents.issue_insight import IssueInsightAgent
@@ -132,40 +133,24 @@ class DailyScheduler:
                 ),
             )
 
-            # Step 1: Sync GitHub data
-            synced = self.snapshot_ingestor.sync_recent(per_page=100, max_pages=20, since=None, prune_missing_open_prs=True)
+            result = run_full_refresh(
+                snapshot_ingestor=self.snapshot_ingestor,
+                repo=self.repo,
+                review_need_agent=self.review_need_agent,
+                issue_insight_agent=self.issue_insight_agent,
+                daily_graph=self.graph,
+            )
+            synced = result["synced"]
+            scored = result["scored"]
             logger.info("Synced %d PRs and %d issues", synced.get("prs", 0), synced.get("issues", 0))
-
-            # Step 2: Recompute scores
-            prs_scored = 0
-            issues_scored = 0
-            needs_review = 0
-            interesting_issues = 0
-
-            for pr in self.repo.prs.values():
-                if pr.state != "open":
-                    continue
-                signal = self.review_need_agent.run(pr)
-                self.repo.save_review_signal(signal)
-                prs_scored += 1
-                if signal.needs_review:
-                    needs_review += 1
-
-            for issue in self.repo.issues.values():
-                if issue.state != "open":
-                    continue
-                signal = self.issue_insight_agent.run(issue)
-                self.repo.save_issue_signal(signal)
-                issues_scored += 1
-                if signal.interesting:
-                    interesting_issues += 1
-
-            logger.info("Scored %d PRs (%d need review) and %d issues (%d interesting)",
-                       prs_scored, needs_review, issues_scored, interesting_issues)
-
-            # Step 3: Run analysis & generate report
-            out = self.graph.invoke()
-            logger.info("Generated report: %s", out.get("notifications", []))
+            logger.info(
+                "Scored %d PRs (%d need review) and %d issues (%d interesting)",
+                scored["prs"],
+                scored["needs_review"],
+                scored["issues"],
+                scored["interesting_issues"],
+            )
+            logger.info("Generated report: %s", result.get("notifications", []))
 
         except Exception as exc:
             logger.exception("Scheduled refresh failed: %s", exc)
@@ -173,10 +158,6 @@ class DailyScheduler:
     def start(self) -> None:
         if self.scheduler.running:
             return
-
-        # Daily report at 16:00 UTC (09:00 America/Los_Angeles during PST)
-        self.scheduler.add_job(self.graph.invoke, "cron", hour=16, minute=0, id="daily-report", replace_existing=True)
-        logger.info("Scheduled daily report at 16:00 UTC")
 
         # Periodic refresh every 30 minutes during the local daytime window.
         if self.enable_periodic_refresh and all([self.snapshot_ingestor, self.repo, self.review_need_agent, self.issue_insight_agent]):

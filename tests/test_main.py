@@ -5,6 +5,7 @@ import pytest
 
 from polaris_pr_intel.config import Settings
 from polaris_pr_intel.main import _configure_logging, build_runtime
+from polaris_pr_intel.scheduler.daily import DailyScheduler
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.config import load_settings
 
@@ -121,3 +122,34 @@ def test_load_settings_prefers_project_specific_token(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.github_token == "project-token"
+
+
+def test_scheduler_registers_only_periodic_refresh_jobs() -> None:
+    scheduler = DailyScheduler(
+        graph=object(),
+        snapshot_ingestor=object(),
+        repo=object(),
+        review_need_agent=object(),
+        issue_insight_agent=object(),
+        enable_periodic_refresh=True,
+        refresh_interval_minutes=60,
+        refresh_start_hour_local=8,
+        refresh_end_hour_local=10,
+    )
+    recorded: list[tuple] = []
+
+    class _SchedulerBackend:
+        running = False
+
+        def add_job(self, func, *args, **kwargs) -> None:
+            recorded.append((func, args, kwargs))
+
+        def start(self) -> None:
+            pass
+
+    scheduler.scheduler = _SchedulerBackend()
+
+    scheduler.start()
+
+    job_ids = [job[2]["id"] for job in recorded]
+    assert job_ids == ["periodic-refresh-0800", "periodic-refresh-0900", "periodic-refresh-1000"]
