@@ -34,6 +34,10 @@ def test_sqlite_repository_persists_data_across_reopen(tmp_path) -> None:
     )
     repo.mark_processed_event("evt-7")
     repo.last_sync_at = datetime(2026, 3, 10, 1, 2, 3, tzinfo=timezone.utc)
+    repo.scheduled_refresh_attempted_at = datetime(2026, 3, 10, 2, 0, 0, tzinfo=timezone.utc)
+    repo.scheduled_refresh_succeeded_at = datetime(2026, 3, 10, 2, 0, 30, tzinfo=timezone.utc)
+    repo.scheduled_refresh_failed_at = datetime(2026, 3, 9, 23, 59, 0, tzinfo=timezone.utc)
+    repo.scheduled_refresh_last_error = "RuntimeError: example failure"
     repo.close()
 
     repo2 = SQLiteRepository(str(db_path))
@@ -41,4 +45,8 @@ def test_sqlite_repository_persists_data_across_reopen(tmp_path) -> None:
     assert repo2.latest_analysis_run() is not None
     assert repo2.has_processed_event("evt-7")
     assert repo2.last_sync_at is not None
+    assert repo2.scheduled_refresh_attempted_at == datetime(2026, 3, 10, 2, 0, 0, tzinfo=timezone.utc)
+    assert repo2.scheduled_refresh_succeeded_at == datetime(2026, 3, 10, 2, 0, 30, tzinfo=timezone.utc)
+    assert repo2.scheduled_refresh_failed_at == datetime(2026, 3, 9, 23, 59, 0, tzinfo=timezone.utc)
+    assert repo2.scheduled_refresh_last_error == "RuntimeError: example failure"
     repo2.close()

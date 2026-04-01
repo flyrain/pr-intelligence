@@ -25,6 +25,10 @@ class InMemoryRepository:
     analysis_runs: list[AnalysisRun] = field(default_factory=list)
     processed_events: set[str] = field(default_factory=set)
     last_sync_at: datetime | None = None
+    scheduled_refresh_attempted_at: datetime | None = None
+    scheduled_refresh_succeeded_at: datetime | None = None
+    scheduled_refresh_failed_at: datetime | None = None
+    scheduled_refresh_last_error: str | None = None
 
     def upsert_pr(self, pr: PullRequestSnapshot) -> None:
         self.prs[pr.number] = pr

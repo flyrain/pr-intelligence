@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-import os
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.refresh import run_full_refresh
+from polaris_pr_intel.time_utils import configured_or_local_timezone
 
 if TYPE_CHECKING:
     from polaris_pr_intel.agents.issue_insight import IssueInsightAgent
@@ -21,29 +20,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _format_refresh_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+
+
 def _local_timezone(timezone_name: str = ""):
-    if timezone_name:
-        try:
-            return ZoneInfo(timezone_name)
-        except ZoneInfoNotFoundError:
-            logger.warning("Invalid refresh timezone %r, falling back to system local timezone", timezone_name)
-
-    local_tz = datetime.now().astimezone().tzinfo
-    zone_key = getattr(local_tz, "key", "")
-    if zone_key:
-        try:
-            return ZoneInfo(zone_key)
-        except ZoneInfoNotFoundError:
-            logger.warning("Local timezone %r is not available via zoneinfo, using system tzinfo as-is", zone_key)
-
-    env_tz = os.getenv("TZ", "").strip()
-    if env_tz:
-        try:
-            return ZoneInfo(env_tz)
-        except ZoneInfoNotFoundError:
-            logger.warning("TZ=%r is not available via zoneinfo, using system tzinfo as-is", env_tz)
-
-    return local_tz
+    return configured_or_local_timezone(timezone_name)
 
 
 def _refresh_schedule_summary(interval_minutes: int, start_hour_local: int, end_hour_local: int) -> str:
@@ -132,6 +115,7 @@ class PeriodicRefreshScheduler:
                     self.refresh_end_hour_local,
                 ),
             )
+            self.repo.scheduled_refresh_attempted_at = datetime.now(timezone.utc)
 
             result = run_full_refresh(
                 snapshot_ingestor=self.snapshot_ingestor,
@@ -151,8 +135,13 @@ class PeriodicRefreshScheduler:
                 scored["interesting_issues"],
             )
             logger.info("Generated report: %s", result.get("notifications", []))
+            self.repo.scheduled_refresh_succeeded_at = datetime.now(timezone.utc)
+            self.repo.scheduled_refresh_failed_at = None
+            self.repo.scheduled_refresh_last_error = None
 
         except Exception as exc:
+            self.repo.scheduled_refresh_failed_at = datetime.now(timezone.utc)
+            self.repo.scheduled_refresh_last_error = _format_refresh_error(exc)
             logger.exception("Scheduled refresh failed: %s", exc)
 
     def start(self) -> None:

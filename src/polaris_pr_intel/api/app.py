@@ -27,6 +27,7 @@ from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, Queu
 from polaris_pr_intel.refresh import run_full_refresh
 from polaris_pr_intel.scheduler.periodic import next_periodic_refresh_at
 from polaris_pr_intel.store.base import Repository
+from polaris_pr_intel.time_utils import activity_timezone_label, format_activity_time, is_same_activity_day
 
 if TYPE_CHECKING:
     from polaris_pr_intel.scheduler.periodic import PeriodicRefreshScheduler
@@ -259,6 +260,16 @@ def create_app(
         return {
             "enabled": periodic_refresh_enabled,
             "last_sync_at": repo.last_sync_at.isoformat() if repo.last_sync_at else None,
+            "scheduled_refresh_attempted_at": (
+                repo.scheduled_refresh_attempted_at.isoformat() if repo.scheduled_refresh_attempted_at else None
+            ),
+            "scheduled_refresh_succeeded_at": (
+                repo.scheduled_refresh_succeeded_at.isoformat() if repo.scheduled_refresh_succeeded_at else None
+            ),
+            "scheduled_refresh_failed_at": (
+                repo.scheduled_refresh_failed_at.isoformat() if repo.scheduled_refresh_failed_at else None
+            ),
+            "scheduled_refresh_last_error": repo.scheduled_refresh_last_error,
             "next_refresh_at": next_refresh_at.isoformat() if next_refresh_at else None,
             "seconds_until_next_refresh": seconds_until_next_refresh,
             "refresh_interval_minutes": app_settings.refresh_interval_minutes,
@@ -296,20 +307,13 @@ def create_app(
     def dashboard() -> str:
         stats = _stats()
         refresh_status = _refresh_status()
-        local_now = datetime.now().astimezone()
-        local_today = local_now.date()
-        local_tz = local_now.tzinfo
+        activity_now = datetime.now(timezone.utc)
+        local_tz = activity_now.astimezone().tzinfo
+        activity_tz_label = activity_timezone_label(app_settings)
         new_updated_rows = []
-        def _is_updated_today_local(updated_at: datetime) -> bool:
-            dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
-            if local_tz is None:
-                return dt.date() == local_today
-            return dt.astimezone(local_tz).date() == local_today
 
         def _fmt_minute_ts(updated_at: datetime) -> str:
-            dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
-            local_dt = dt.astimezone(local_tz) if local_tz else dt
-            return local_dt.strftime("%H:%M")
+            return format_activity_time(updated_at, settings=app_settings)
 
         def _fmt_local_timestamp(value: str | None) -> str:
             if not value:
@@ -330,7 +334,11 @@ def create_app(
             return " ".join(parts)
 
         new_updated_prs = sorted(
-            [pr for pr in repo.prs.values() if pr.state == "open" and _is_updated_today_local(pr.updated_at)],
+            [
+                pr
+                for pr in repo.prs.values()
+                if pr.state == "open" and is_same_activity_day(pr.updated_at, now=activity_now, settings=app_settings)
+            ],
             key=lambda p: p.updated_at,
             reverse=True,
         )
@@ -349,7 +357,7 @@ def create_app(
             "<details class=\"folded-section\">"
             f"<summary>Show {len(folded_new_updated_rows)} more PRs</summary>"
             "<table>"
-            "<thead><tr><th>PR</th><th>Title</th><th>Updated</th><th>Action</th></tr></thead>"
+            f"<thead><tr><th>PR</th><th>Title</th><th>Updated ({escape(activity_tz_label)})</th><th>Action</th></tr></thead>"
             f"<tbody>{''.join(folded_new_updated_rows)}</tbody>"
             "</table>"
             "</details>"
@@ -495,7 +503,8 @@ def create_app(
     }}
     .hero-top {{
       display: grid;
-      grid-template-columns: minmax(320px, 360px) minmax(40px, 1fr) fit-content(320px) fit-content(240px) 140px;
+      grid-template-columns: minmax(0, 1fr) fit-content(320px) fit-content(240px) 140px;
+      grid-template-areas: "brand last next sync";
       gap: 14px;
       align-items: center;
     }}
@@ -546,6 +555,7 @@ def create_app(
       border-color: rgba(125, 239, 233, 0.2);
     }}
     .btn.sync-btn {{
+      grid-area: sync;
       background: linear-gradient(135deg, #1b877f 0%, #176f75 100%);
       border-color: rgba(79, 214, 197, 0.18);
     }}
@@ -767,13 +777,6 @@ def create_app(
     .queue-section[open] > summary {{
       margin-bottom: 10px;
     }}
-    .status-panel {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(220px, 1fr));
-      gap: 12px;
-      margin: 0;
-      min-width: 0;
-    }}
     .status-item {{
       padding: 9px 14px 9px 16px;
       border-radius: 16px;
@@ -814,14 +817,18 @@ def create_app(
       display: inline;
       margin-left: 8px;
     }}
-    .hero-spacer {{
-      min-width: 0;
-    }}
     .hero-heading {{
+      grid-area: brand;
       display: flex;
       align-items: center;
       gap: 14px;
       min-width: 0;
+    }}
+    .status-last {{
+      grid-area: last;
+    }}
+    .status-next {{
+      grid-area: next;
     }}
     .brand-logo {{
       width: 56px;
@@ -837,9 +844,27 @@ def create_app(
       margin-top: 6px;
       white-space: nowrap;
     }}
+    @media (max-width: 1180px) {{
+      .hero-top {{
+        grid-template-columns: minmax(0, 1fr) fit-content(320px) 140px;
+        grid-template-areas:
+          "brand last sync"
+          "brand next sync";
+        align-items: stretch;
+      }}
+    }}
     @media (max-width: 960px) {{
-      .hero-top {{ grid-template-columns: 1fr; }}
-      .status-panel {{ grid-template-columns: 1fr; }}
+      .hero-top {{
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "brand"
+          "last"
+          "next"
+          "sync";
+      }}
+      .btn.sync-btn {{
+        width: 100%;
+      }}
       .layout {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 28px; }}
     }}
@@ -921,7 +946,7 @@ def create_app(
     window.addEventListener("DOMContentLoaded", startRefreshCountdown);
   </script>
 </head>
-	<body>
+	 <body>
 	  <div class="wrap">
 	    <section class="hero">
 	      <div class="hero-top">
@@ -932,12 +957,11 @@ def create_app(
 	          <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
             </div>
           </div>
-          <div class="hero-spacer"></div>
-          <article class="status-item">
+          <article class="status-item status-last">
             <div class="k">Last Update</div>
             <div class="v">{escape(_fmt_local_timestamp(refresh_status["last_sync_at"]))}</div>
           </article>
-          <article class="status-item">
+          <article class="status-item status-next">
             <div class="k">Next Update In:</div>
             <div class="v" id="next-refresh-countdown" data-remaining-seconds="{'' if refresh_status['seconds_until_next_refresh'] is None else refresh_status['seconds_until_next_refresh']}">{escape(_fmt_duration(refresh_status["seconds_until_next_refresh"]))}</div>
           </article>
@@ -967,9 +991,9 @@ def create_app(
         </article>
         <article class="card" style="margin-top: 14px;">
           <details class="tab-fold">
-            <summary>New/Updated PRs Today ({len(new_updated_rows)})</summary>
+            <summary>New/Updated PRs Today ({escape(activity_tz_label)}) ({len(new_updated_rows)})</summary>
             <table>
-              <thead><tr><th>PR</th><th>Title</th><th>Updated</th><th>Action</th></tr></thead>
+              <thead><tr><th>PR</th><th>Title</th><th>Updated ({escape(activity_tz_label)})</th><th>Action</th></tr></thead>
               <tbody>{''.join(visible_new_updated_rows) if new_updated_rows else '<tr><td colspan="4">No PR updates observed today.</td></tr>'}</tbody>
             </table>
             {folded_new_updated_html}

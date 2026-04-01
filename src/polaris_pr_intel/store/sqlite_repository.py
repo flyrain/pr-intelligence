@@ -80,6 +80,32 @@ class SQLiteRepository:
         with self._lock:
             self._conn.close()
 
+    def _get_metadata_value(self, key: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
+        if not row:
+            return None
+        return str(row["value"])
+
+    def _set_metadata_value(self, key: str, value: str | None) -> None:
+        with self._lock, self._conn:
+            if value is None:
+                self._conn.execute("DELETE FROM metadata WHERE key = ?", (key,))
+                return
+            self._conn.execute(
+                "INSERT INTO metadata(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def _get_metadata_datetime(self, key: str) -> datetime | None:
+        raw = self._get_metadata_value(key)
+        if raw is None:
+            return None
+        return datetime.fromisoformat(raw)
+
+    def _set_metadata_datetime(self, key: str, value: datetime | None) -> None:
+        self._set_metadata_value(key, value.isoformat() if value else None)
+
     @property
     def prs(self) -> dict[int, PullRequestSnapshot]:
         with self._lock:
@@ -124,22 +150,43 @@ class SQLiteRepository:
 
     @property
     def last_sync_at(self) -> datetime | None:
-        with self._lock:
-            row = self._conn.execute("SELECT value FROM metadata WHERE key = ?", ("last_sync_at",)).fetchone()
-        if not row:
-            return None
-        return datetime.fromisoformat(row["value"])
+        return self._get_metadata_datetime("last_sync_at")
 
     @last_sync_at.setter
     def last_sync_at(self, value: datetime | None) -> None:
-        with self._lock, self._conn:
-            if value is None:
-                self._conn.execute("DELETE FROM metadata WHERE key = ?", ("last_sync_at",))
-                return
-            self._conn.execute(
-                "INSERT INTO metadata(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                ("last_sync_at", value.isoformat()),
-            )
+        self._set_metadata_datetime("last_sync_at", value)
+
+    @property
+    def scheduled_refresh_attempted_at(self) -> datetime | None:
+        return self._get_metadata_datetime("scheduled_refresh_attempted_at")
+
+    @scheduled_refresh_attempted_at.setter
+    def scheduled_refresh_attempted_at(self, value: datetime | None) -> None:
+        self._set_metadata_datetime("scheduled_refresh_attempted_at", value)
+
+    @property
+    def scheduled_refresh_succeeded_at(self) -> datetime | None:
+        return self._get_metadata_datetime("scheduled_refresh_succeeded_at")
+
+    @scheduled_refresh_succeeded_at.setter
+    def scheduled_refresh_succeeded_at(self, value: datetime | None) -> None:
+        self._set_metadata_datetime("scheduled_refresh_succeeded_at", value)
+
+    @property
+    def scheduled_refresh_failed_at(self) -> datetime | None:
+        return self._get_metadata_datetime("scheduled_refresh_failed_at")
+
+    @scheduled_refresh_failed_at.setter
+    def scheduled_refresh_failed_at(self, value: datetime | None) -> None:
+        self._set_metadata_datetime("scheduled_refresh_failed_at", value)
+
+    @property
+    def scheduled_refresh_last_error(self) -> str | None:
+        return self._get_metadata_value("scheduled_refresh_last_error")
+
+    @scheduled_refresh_last_error.setter
+    def scheduled_refresh_last_error(self, value: str | None) -> None:
+        self._set_metadata_value("scheduled_refresh_last_error", value)
 
     def upsert_pr(self, pr: PullRequestSnapshot) -> None:
         with self._lock, self._conn:

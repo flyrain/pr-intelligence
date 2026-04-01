@@ -23,6 +23,10 @@ class Repository(Protocol):
     pr_review_reports: dict[int, PRReviewReport]
     analysis_runs: list[AnalysisRun]
     last_sync_at: datetime | None
+    scheduled_refresh_attempted_at: datetime | None
+    scheduled_refresh_succeeded_at: datetime | None
+    scheduled_refresh_failed_at: datetime | None
+    scheduled_refresh_last_error: str | None
 
     def upsert_pr(self, pr: PullRequestSnapshot) -> None: ...
     def upsert_issue(self, issue: IssueSnapshot) -> None: ...

@@ -14,6 +14,7 @@ from polaris_pr_intel.models import (
     ReportArtifact,
 )
 from polaris_pr_intel.store.base import Repository
+from polaris_pr_intel.time_utils import is_same_activity_day
 
 
 class DerivedAnalysisAgent:
@@ -95,22 +96,17 @@ class DerivedAnalysisAgent:
     def _build_items(self, contexts: list[PRAttentionContext], decisions: list[PRAttentionDecision]) -> list[AnalysisItem]:
         items: list[AnalysisItem] = []
         contexts_by_number = {ctx.pr_number: ctx for ctx in contexts}
-        local_now = datetime.now().astimezone()
-        local_tz = local_now.tzinfo
-        local_today = local_now.date()
-
-        def _is_updated_today_local(updated_at: datetime) -> bool:
-            dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
-            if local_tz is None:
-                return dt.date() == local_today
-            return dt.astimezone(local_tz).date() == local_today
-
+        activity_now = datetime.now(timezone.utc)
         for decision in decisions:
             ctx = contexts_by_number[decision.pr_number]
             pr = self.repo.prs.get(decision.pr_number)
             if pr is None:
                 continue
-            catalogs = self._decision_catalogs(ctx, decision, _is_updated_today_local(pr.updated_at))
+            catalogs = self._decision_catalogs(
+                ctx,
+                decision,
+                is_same_activity_day(pr.updated_at, now=activity_now, settings=self.settings),
+            )
             items.append(
                 AnalysisItem(
                     item_type="pr",

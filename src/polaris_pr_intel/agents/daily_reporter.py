@@ -2,25 +2,27 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from polaris_pr_intel.config import Settings
 from polaris_pr_intel.store.base import Repository
+from polaris_pr_intel.time_utils import activity_timezone_label, format_activity_time, is_same_activity_day
 
 
 class DailyReporterAgent:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings
+
     def run(self, repo: Repository) -> str:
         now_dt = datetime.now(timezone.utc)
-        local_now = datetime.now().astimezone()
-        local_tz = local_now.tzinfo
-        today = local_now.date()
+        activity_tz_label = activity_timezone_label(self.settings)
 
         pr_signals = sorted(repo.review_signals.values(), key=lambda s: s.score, reverse=True)
         issue_signals = sorted(repo.issue_signals.values(), key=lambda s: s.score, reverse=True)
-        def _is_updated_today_local(updated_at: datetime) -> bool:
-            dt = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=timezone.utc)
-            if local_tz is None:
-                return dt.date() == today
-            return dt.astimezone(local_tz).date() == today
 
-        new_prs_today = [pr for pr in repo.prs.values() if pr.state == "open" and _is_updated_today_local(pr.updated_at)]
+        new_prs_today = [
+            pr
+            for pr in repo.prs.values()
+            if pr.state == "open" and is_same_activity_day(pr.updated_at, now=now_dt, settings=self.settings)
+        ]
         aging_prs = [pr for pr in repo.prs.values() if (now_dt - pr.updated_at).total_seconds() / 3600 >= 72 and pr.state == "open"]
         issue_label_counts: dict[str, int] = {}
         for issue in repo.issues.values():
@@ -56,10 +58,12 @@ class DailyReporterAgent:
         else:
             lines.append("- No aging open PRs above 72h.")
 
-        lines += ["", "## New/Updated PRs Today"]
+        lines += ["", f"## New/Updated PRs Today ({activity_tz_label})"]
         if new_prs_today:
             for pr in sorted(new_prs_today, key=lambda p: p.updated_at, reverse=True)[:10]:
-                lines.append(f"- [#{pr.number}]({pr.html_url}) {pr.title} | updated={pr.updated_at.isoformat()}")
+                lines.append(
+                    f"- [#{pr.number}]({pr.html_url}) {pr.title} | updated={format_activity_time(pr.updated_at, settings=self.settings, include_date=True)} {activity_tz_label}"
+                )
         else:
             lines.append("- No PR updates observed today.")
 

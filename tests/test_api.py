@@ -133,6 +133,16 @@ class _DummyScheduler:
         self.scheduler = _DummySchedulerBackend(jobs)
 
 
+class _FrozenDateTime(datetime):
+    frozen_now = datetime(2026, 4, 1, 12, 0, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return cls.frozen_now
+        return cls.frozen_now.astimezone(tz)
+
+
 def _client(settings: Settings | None = None) -> tuple[TestClient, InMemoryRepository, _DummyIngestor, _DummyPRReviewGraph]:
     repo = InMemoryRepository()
     ingestor = _DummyIngestor()
@@ -209,6 +219,10 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
         )
     )
     repo.save_issue_signal(IssueSignal(issue_number=2, score=2.5, reasons=["label:bug"], interesting=True))
+    repo.scheduled_refresh_attempted_at = datetime(2026, 3, 10, 8, 0, 0, tzinfo=timezone.utc)
+    repo.scheduled_refresh_succeeded_at = datetime(2026, 3, 10, 8, 0, 10, tzinfo=timezone.utc)
+    repo.scheduled_refresh_failed_at = datetime(2026, 3, 9, 23, 50, 0, tzinfo=timezone.utc)
+    repo.scheduled_refresh_last_error = "RuntimeError: previous scheduler failure"
     root = client.get("/")
     stats = client.get("/stats")
 
@@ -223,6 +237,14 @@ def test_root_and_stats_endpoints_return_useful_summary() -> None:
     stats_data = stats.json()
     assert stats_data["ok"] is True
     assert stats_data["stats"]["interesting_issues_queue"] == 1
+    assert "scheduled_refresh_attempted_at" not in root_data["stats"]
+    assert "scheduled_refresh_succeeded_at" not in root_data["stats"]
+    assert "scheduled_refresh_failed_at" not in root_data["stats"]
+    assert "scheduled_refresh_last_error" not in root_data["stats"]
+    assert "scheduled_refresh_attempted_at" not in stats_data["stats"]
+    assert "scheduled_refresh_succeeded_at" not in stats_data["stats"]
+    assert "scheduled_refresh_failed_at" not in stats_data["stats"]
+    assert "scheduled_refresh_last_error" not in stats_data["stats"]
 
 
 def test_stats_endpoint_reads_pr_review_reports_with_sqlite_backend(tmp_path) -> None:
@@ -629,6 +651,9 @@ def test_ui_endpoint_renders_dashboard() -> None:
     assert "Review Jobs" in resp.text
     assert '>Sync</button>' in resp.text
     assert 'fetch("/refresh' in resp.text
+    assert 'class="status-item status-last"' in resp.text
+    assert 'class="status-item status-next"' in resp.text
+    assert 'grid-template-areas: "brand last next sync";' in resp.text
     assert '<details class="tab-fold">' in resp.text
     assert '<details class="tab-fold" open>' not in resp.text
     assert '<details class="queue-section">' in resp.text
@@ -720,6 +745,69 @@ def test_ui_new_updated_prs_excludes_closed_prs() -> None:
     assert resp.status_code == 200
     assert "Open PR" in resp.text
     assert "Merged PR" not in resp.text
+
+
+def test_ui_new_updated_prs_uses_utc_day_by_default(monkeypatch) -> None:
+    monkeypatch.setattr("polaris_pr_intel.api.app.datetime", _FrozenDateTime)
+    client, repo, _, _ = _client()
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=903,
+            title="UTC-day PR",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/903",
+            updated_at=datetime(2026, 4, 1, 4, 30, tzinfo=timezone.utc),
+        )
+    )
+
+    resp = client.get("/ui")
+
+    assert resp.status_code == 200
+    assert "New/Updated PRs Today (UTC) (1)" in resp.text
+    assert "UTC-day PR" in resp.text
+    assert "Updated (UTC)" in resp.text
+
+
+def test_ui_new_updated_prs_can_use_configured_refresh_timezone(monkeypatch) -> None:
+    monkeypatch.setattr("polaris_pr_intel.api.app.datetime", _FrozenDateTime)
+    client, repo, _, _ = _client(Settings(github_token="", refresh_timezone="America/Los_Angeles"))
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=904,
+            title="Local-yesterday PR",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=1,
+            deletions=1,
+            html_url="https://example.com/pr/904",
+            updated_at=datetime(2026, 4, 1, 4, 30, tzinfo=timezone.utc),
+        )
+    )
+
+    resp = client.get("/ui")
+
+    assert resp.status_code == 200
+    assert "New/Updated PRs Today (America/Los_Angeles) (0)" in resp.text
+    assert "Local-yesterday PR" not in resp.text
 
 
 def test_ui_deep_reviews_ordered_by_review_time_desc() -> None:
