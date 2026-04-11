@@ -1036,6 +1036,13 @@ class CodexLocalAdapter(HeuristicLLMAdapter):
     @staticmethod
     def _format_failure_detail(exc: Exception) -> str:
         detail = str(exc)
+        if isinstance(exc, subprocess.TimeoutExpired):
+            timeout_sec = int(exc.timeout) if exc.timeout else "unknown"
+            return (
+                f"codex_local CLI timed out after {timeout_sec}s before producing output. "
+                "Large PR reviews may need a higher CODEX_TIMEOUT_SEC, lower CODEX_REASONING_EFFORT, "
+                "or self-review disabled."
+            )
         if isinstance(exc, subprocess.CalledProcessError):
             stderr = (exc.stderr or "").strip().replace("\n", " ")
             stdout = (exc.stdout or "").strip().replace("\n", " ")

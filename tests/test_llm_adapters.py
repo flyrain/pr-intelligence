@@ -250,6 +250,22 @@ def test_codex_local_adapter_passes_reasoning_effort_override_to_subprocess(monk
     assert captured_cmd[idx + 1] == 'model_reasoning_effort="medium"'
 
 
+def test_codex_local_adapter_formats_timeout_failures(monkeypatch, caplog) -> None:
+    adapter = CodexLocalAdapter(command="codex")
+
+    def _fake_run_raw_prompt(prompt: str):
+        raise subprocess.TimeoutExpired(cmd="codex", timeout=900)
+
+    monkeypatch.setattr(adapter, "_run_raw_prompt", _fake_run_raw_prompt)
+    caplog.set_level(logging.WARNING)
+
+    findings = adapter.analyze_pr_with_self_review(_pr())
+
+    assert "timed out after 900s before producing output" in caplog.text
+    assert "CODEX_TIMEOUT_SEC" in caplog.text
+    assert len(findings) == len(adapter.review_aspects)
+
+
 def test_codex_local_adapter_surfaces_sandboxed_codex_failure(monkeypatch) -> None:
     adapter = CodexLocalAdapter(command="codex")
 
@@ -371,6 +387,17 @@ def test_factory_builds_codex_local_adapter(monkeypatch) -> None:
     assert adapter.provider == "codex_local"
     assert adapter.model == "gpt-5-codex"
     assert adapter.reasoning_effort == "medium"
+
+
+def test_codex_settings_defaults_favor_medium_effort_and_longer_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
+    monkeypatch.delenv("CODEX_TIMEOUT_SEC", raising=False)
+    monkeypatch.delenv("CODEX_REASONING_EFFORT", raising=False)
+
+    settings = load_settings()
+
+    assert settings.codex_timeout_sec == 900
+    assert settings.codex_reasoning_effort == "medium"
 
 
 def test_factory_rejects_invalid_codex_reasoning_effort(monkeypatch) -> None:

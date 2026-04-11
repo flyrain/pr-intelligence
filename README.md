@@ -165,8 +165,9 @@ Current limitation:
 
 ### Local Codex provider
 - `CODEX_CMD` (default: `codex`)
-- `CODEX_TIMEOUT_SEC` (default: `300`)
+- `CODEX_TIMEOUT_SEC` (default: `900`)
 - `CODEX_MAX_TURNS` (default: `15`)
+- `CODEX_REASONING_EFFORT` (default: `medium`; supported: `low`, `medium`, `high`)
 
 ### Scoring knobs
 - `REVIEW_NEEDED_THRESHOLD` (default: `2.0`)
