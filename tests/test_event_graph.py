@@ -6,7 +6,7 @@ from polaris_pr_intel.config import Settings
 from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
-from polaris_pr_intel.llm.adapters import HeuristicLLMAdapter
+from polaris_pr_intel.llm._heuristic import HeuristicLLMAdapter
 from polaris_pr_intel.models import GitHubEvent, PRAttentionDecision, PullRequestSnapshot, ReviewSignal
 from polaris_pr_intel.store.repository import InMemoryRepository
 from polaris_pr_intel.agents.pr_reviewer import PRSubagentReviewer

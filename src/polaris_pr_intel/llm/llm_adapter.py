@@ -1,29 +1,37 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
 
 from polaris_pr_intel.config import Settings
-from polaris_pr_intel.llm.adapters import (
-    AnthropicAdapter,
-    ClaudeCodeLocalAdapter,
-    CodexLocalAdapter,
-    GeminiAdapter,
-    HeuristicLLMAdapter,
-    OpenAIAdapter,
-)
-from polaris_pr_intel.llm.base import LLMAdapter
+from polaris_pr_intel.models import PRAttentionContext, PRAttentionDecision, PRSubagentFinding, PullRequestSnapshot
+
+
+class LLMAdapter(Protocol):
+    provider: str
+    model: str
+
+    def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding: ...
+    def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]: ...
+    def analyze_pr_with_self_review(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]: ...
+    def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding: ...
+    def analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]) -> dict[int, PRSubagentFinding]: ...
+    def analyze_attention_batch(self, contexts: list[PRAttentionContext]) -> dict[int, PRAttentionDecision]: ...
+
+
+SUPPORTED_LLM_PROVIDERS = ("heuristic", "claude_code_local", "codex_local")
 
 
 def build_llm_adapter(settings: Settings) -> LLMAdapter:
     provider = settings.llm_provider.lower()
     shared_repo_dir = (settings.local_review_repo_dir or "").strip()
-    if provider == "openai":
-        return OpenAIAdapter(api_key=settings.openai_api_key, model=settings.llm_model or "gpt-4o-mini")
-    if provider == "gemini":
-        return GeminiAdapter(api_key=settings.gemini_api_key, model=settings.llm_model or "gemini-1.5-pro")
-    if provider == "anthropic":
-        return AnthropicAdapter(api_key=settings.anthropic_api_key, model=settings.llm_model or "claude-3-5-sonnet")
+    if provider == "heuristic":
+        from polaris_pr_intel.llm._heuristic import HeuristicLLMAdapter
+
+        return HeuristicLLMAdapter(model=settings.llm_model or "local-heuristic")
     if provider == "claude_code_local":
+        from polaris_pr_intel.llm._claude_code_local import ClaudeCodeLocalAdapter
+
         repo_dir = shared_repo_dir
         if not repo_dir:
             raise RuntimeError("LOCAL_REVIEW_REPO_DIR must not be empty when using local CLI providers.")
@@ -42,6 +50,8 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
             analysis_skill_file=settings.analysis_skill_file,
         )
     if provider == "codex_local":
+        from polaris_pr_intel.llm._codex_local import CodexLocalAdapter
+
         repo_dir = shared_repo_dir
         if not repo_dir:
             raise RuntimeError("LOCAL_REVIEW_REPO_DIR must not be empty when using local CLI providers.")
@@ -60,4 +70,5 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
             review_skill_file=settings.review_skill_file,
             analysis_skill_file=settings.analysis_skill_file,
         )
-    return HeuristicLLMAdapter(model=settings.llm_model or "local-heuristic")
+    supported = ", ".join(SUPPORTED_LLM_PROVIDERS)
+    raise RuntimeError(f"Unsupported LLM_PROVIDER={provider!r}. Supported values: {supported}")

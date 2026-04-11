@@ -1062,6 +1062,56 @@ def test_pr_review_async_job_mode() -> None:
     assert job_id in ui.text
 
 
+def test_pr_review_sync_returns_failed_result_when_review_raises() -> None:
+    client, _, ingestor, pr_review_graph = _client()
+
+    def _boom(pr_number: int) -> dict:
+        raise RuntimeError("codex_local review failed: backend unavailable")
+
+    pr_review_graph.invoke = _boom  # type: ignore[method-assign]
+
+    run = client.post("/reviews/pr/123/run", params={"wait": True})
+
+    assert run.status_code == 200
+    data = run.json()
+    assert data["ok"] is False
+    assert data["mode"] == "sync"
+    assert data["errors"] == ["codex_local review failed: backend unavailable"]
+    assert data["report"] is None
+    assert ingestor.pr_calls == [123]
+
+
+def test_pr_review_async_job_fails_when_review_raises() -> None:
+    client, _, _, pr_review_graph = _client()
+
+    def _boom(pr_number: int) -> dict:
+        raise RuntimeError("codex_local review failed: backend unavailable")
+
+    pr_review_graph.invoke = _boom  # type: ignore[method-assign]
+
+    run = client.post("/reviews/pr/456/run")
+    assert run.status_code == 200
+    body = run.json()
+    job_id = body["job_id"]
+
+    final = None
+    for _ in range(30):
+        status = client.get(f"/reviews/jobs/{job_id}")
+        assert status.status_code == 200
+        payload = status.json()
+        assert payload["ok"] is True
+        if payload["job"]["status"] in {"completed", "failed"}:
+            final = payload["job"]
+            break
+        time.sleep(0.01)
+
+    assert final is not None
+    assert final["status"] == "failed"
+    assert final["result"]["ok"] is False
+    assert final["result"]["errors"] == ["codex_local review failed: backend unavailable"]
+    assert final["result"]["report"] is None
+
+
 def test_activity_metrics_keep_comments_and_reviews_separate() -> None:
     now = datetime.now(timezone.utc)
     hour_ago = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")

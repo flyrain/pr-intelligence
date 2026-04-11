@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from polaris_pr_intel.llm.base import LLMAdapter
+from polaris_pr_intel.llm.llm_adapter import LLMAdapter
 from polaris_pr_intel.models import PRReviewReport, PRSubagentFinding, PullRequestSnapshot
 
 

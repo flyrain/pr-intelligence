@@ -13,7 +13,7 @@ from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
 from polaris_pr_intel.graphs.event_graph import EventGraph
 from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
 from polaris_pr_intel.ingest import SnapshotIngestor
-from polaris_pr_intel.llm.factory import build_llm_adapter
+from polaris_pr_intel.llm import build_llm_adapter
 from polaris_pr_intel.scheduler.periodic import PeriodicRefreshScheduler
 from polaris_pr_intel.store.base import Repository
 from polaris_pr_intel.store.repository import InMemoryRepository

@@ -6,8 +6,10 @@ import subprocess
 import pytest
 
 from polaris_pr_intel.config import load_settings
-from polaris_pr_intel.llm.adapters import ClaudeCodeLocalAdapter, CodexLocalAdapter
-from polaris_pr_intel.llm.factory import build_llm_adapter
+from polaris_pr_intel.llm import build_llm_adapter
+from polaris_pr_intel.llm._base_local_cli import BaseLocalCLIAdapter
+from polaris_pr_intel.llm._claude_code_local import ClaudeCodeLocalAdapter
+from polaris_pr_intel.llm._codex_local import CodexLocalAdapter
 from polaris_pr_intel.models import PullRequestSnapshot
 
 
@@ -259,11 +261,11 @@ def test_codex_local_adapter_formats_timeout_failures(monkeypatch, caplog) -> No
     monkeypatch.setattr(adapter, "_run_raw_prompt", _fake_run_raw_prompt)
     caplog.set_level(logging.WARNING)
 
-    findings = adapter.analyze_pr_with_self_review(_pr())
+    with pytest.raises(RuntimeError, match="timed out after 900s before producing output"):
+        adapter.analyze_pr_with_self_review(_pr())
 
-    assert "timed out after 900s before producing output" in caplog.text
+    assert "Step 1 failed, failing review job" in caplog.text
     assert "CODEX_TIMEOUT_SEC" in caplog.text
-    assert len(findings) == len(adapter.review_aspects)
 
 
 def test_codex_local_adapter_surfaces_sandboxed_codex_failure(monkeypatch) -> None:
@@ -312,7 +314,7 @@ def test_codex_local_adapter_strips_parent_codex_env(monkeypatch) -> None:
     assert all(not key.startswith("CODEX_") for key in captured_env if key != "CODEX_HOME")
 
 
-def test_codex_local_adapter_comprehensive_fallback_does_not_retry_per_aspect(monkeypatch) -> None:
+def test_codex_local_adapter_comprehensive_failure_raises_without_retry_per_aspect(monkeypatch) -> None:
     adapter = CodexLocalAdapter(command="codex")
     calls = 0
 
@@ -323,14 +325,13 @@ def test_codex_local_adapter_comprehensive_fallback_does_not_retry_per_aspect(mo
 
     monkeypatch.setattr(adapter, "_run_raw_prompt", _fake_run_raw_prompt)
 
-    findings = adapter.analyze_pr_comprehensive(_pr())
+    with pytest.raises(RuntimeError, match="could not reach the Codex backend"):
+        adapter.analyze_pr_comprehensive(_pr())
 
     assert calls == 1
-    assert len(findings) == len(adapter.review_aspects)
-    assert all(not finding.summary.startswith("(fallback heuristic:") for finding in findings)
 
 
-def test_codex_local_adapter_self_review_skips_critique_if_initial_review_fails(monkeypatch, caplog) -> None:
+def test_codex_local_adapter_self_review_fails_job_if_initial_review_fails(monkeypatch, caplog) -> None:
     adapter = CodexLocalAdapter(command="codex")
     prompts: list[str] = []
 
@@ -341,12 +342,12 @@ def test_codex_local_adapter_self_review_skips_critique_if_initial_review_fails(
     monkeypatch.setattr(adapter, "_run_raw_prompt", _fake_run_raw_prompt)
     caplog.set_level(logging.WARNING)
 
-    findings = adapter.analyze_pr_with_self_review(_pr())
+    with pytest.raises(RuntimeError, match="could not reach the Codex backend"):
+        adapter.analyze_pr_with_self_review(_pr())
 
     assert len(prompts) == 1
-    assert "Step 1 failed, falling back to heuristic" in caplog.text
+    assert "Step 1 failed, failing review job" in caplog.text
     assert "could not reach the Codex backend" in caplog.text
-    assert all(not finding.summary.startswith("(fallback heuristic:") for finding in findings)
 
 
 def test_codex_local_adapter_uses_last_message_output_even_on_nonzero_exit(monkeypatch) -> None:
@@ -428,6 +429,17 @@ def test_factory_fails_for_invalid_codex_repo_dir(monkeypatch) -> None:
     monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/path/that/does/not/exist")
     settings = load_settings()
     with pytest.raises(RuntimeError, match="LOCAL_REVIEW_REPO_DIR is invalid"):
+        build_llm_adapter(settings)
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini", "bogus"])
+def test_factory_rejects_unsupported_provider(monkeypatch, provider: str) -> None:
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
+    monkeypatch.setenv("LLM_PROVIDER", provider)
+
+    settings = load_settings()
+
+    with pytest.raises(RuntimeError, match="Unsupported LLM_PROVIDER="):
         build_llm_adapter(settings)
 
 
@@ -552,11 +564,8 @@ def test_claude_code_local_adapter_attention_batch_uses_analysis_skill_only(tmp_
         )
     ]
 
-    # Use the internal helper to build the batch prompt (it calls _load_skill_prompt internally)
-    from polaris_pr_intel.llm.adapters import _build_attention_batch_prompt
-
     skill_prompt = adapter._load_skill_prompt(adapter.analysis_skill_file)
-    batch_prompt = _build_attention_batch_prompt(skill_prompt, contexts)
+    batch_prompt = BaseLocalCLIAdapter._build_attention_batch_prompt(skill_prompt, contexts)
 
     assert "Apache Polaris Attention Analysis Skill" in batch_prompt
     assert "Rank PRs for attention." in batch_prompt

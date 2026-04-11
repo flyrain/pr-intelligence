@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from polaris_pr_intel.config import Settings
-from polaris_pr_intel.llm.adapters import HeuristicLLMAdapter
-from polaris_pr_intel.llm.base import LLMAdapter
+from polaris_pr_intel.llm import LLMAdapter
+from polaris_pr_intel.llm._heuristic import HeuristicLLMAdapter
 from polaris_pr_intel.models import (
     AnalysisItem,
     AnalysisRun,

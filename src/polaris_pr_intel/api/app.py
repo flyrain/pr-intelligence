@@ -148,7 +148,10 @@ def create_app(
             fetched = snapshot_ingestor.sync_pr(pr_number)
             if not fetched:
                 return {"ok": False, "errors": [f"pr-not-found:{pr_number}"], "report": None}
-        out = pr_review_graph.invoke(pr_number)
+        try:
+            out = pr_review_graph.invoke(pr_number)
+        except Exception as exc:
+            return {"ok": False, "notifications": [], "errors": [str(exc)], "report": None}
         report = repo.latest_pr_review_report(pr_number)
         return {
             "ok": True,

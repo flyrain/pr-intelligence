@@ -6,7 +6,7 @@ from langgraph.graph import END, StateGraph
 
 from polaris_pr_intel.agents.derived_analysis import DerivedAnalysisAgent
 from polaris_pr_intel.config import Settings
-from polaris_pr_intel.llm.base import LLMAdapter
+from polaris_pr_intel.llm.llm_adapter import LLMAdapter
 from polaris_pr_intel.graphs.state import PRIntelState
 from polaris_pr_intel.publish.console import ConsolePublisher
 from polaris_pr_intel.store.base import Repository

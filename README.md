@@ -149,7 +149,8 @@ PORT=9090 ./run.sh serve
 
 ### LLM provider selection
 - `LLM_PROVIDER` (default: `claude_code_local`)
-  - supported: `heuristic`, `openai`, `gemini`, `anthropic`, `claude_code_local`, `codex_local`
+  - supported: `heuristic`, `claude_code_local`, `codex_local`
+  - `heuristic` means rule-based local scoring/review only; it does not call Claude, Codex, or any hosted LLM
 - `LLM_MODEL` (optional; provider-specific default when unset)
   - `codex_local` default: `gpt-5.4`
   - known Codex model ids to use here: `gpt-5.4`, `gpt-5.4-mini`, `gpt-5-codex`
@@ -159,7 +160,6 @@ PORT=9090 ./run.sh serve
 
 Current limitation:
 - attention ranking via `ANALYSIS_SKILL_FILE` is LLM-backed only for `claude_code_local` and `codex_local`
-- `openai`, `gemini`, and `anthropic` currently fall back to heuristic attention ranking for the batch queue path
 
 ### Local Claude Code provider
 - `CLAUDE_CODE_CMD` (default: `claude`)
@@ -243,7 +243,7 @@ This separation allows:
 
 The service includes an optional **multi-step self-review** capability that improves PR review quality through LLM critique and revision.
 This path is implemented by the local CLI adapters (`claude_code_local` and `codex_local`).
-The heuristic adapter, and the API-named placeholder adapters that currently inherit from it, fall back to a single-pass comprehensive review instead of the 3-step flow.
+The `heuristic` provider uses a single-pass rule-based review instead of the 3-step LLM self-review flow.
 
 ### How It Works
 
@@ -334,10 +334,9 @@ Look for improvements in:
 - Adapter layer is provider-agnostic.
 - Local providers (`claude_code_local`, `codex_local`) use your local repo path for code-aware analysis.
 - The local providers are the only adapters that currently execute real external LLM/tooling calls.
-- The `openai`, `gemini`, and `anthropic` adapters currently inherit heuristic behavior rather than calling those hosted APIs directly.
 - Individual PR review and post-sync report analysis intentionally use different prompt paths and different skills.
 - Post-sync report analysis batches the current open PR set into one LLM call instead of one call per PR.
-- If CLI execution fails or output parsing fails, adapters fall back to deterministic heuristic output.
+- If CLI execution fails or output parsing fails, adapters fall back to deterministic rule-based output.
 - Async review jobs are queued in-memory (not persisted).
 - Repeated async requests for the same PR while a job is `queued`/`running` are deduplicated and return the existing `job_id` (`deduplicated: true`).
 - The service logs the configured LLM provider at startup and logs each CLI LLM invocation.
@@ -568,7 +567,7 @@ kill <pid>
 - Verify your API keys are set correctly
 - Check `claude`, `codex`, or other CLI tools are in PATH for local providers
 - Review logs for detailed error messages
-- Fall back to `heuristic` provider for testing: `export LLM_PROVIDER=heuristic`
+- Switch to the rule-based local provider for testing: `export LLM_PROVIDER=heuristic`
 
 **Self-review taking too long**
 ```

@@ -29,9 +29,6 @@ class Settings:
     sqlite_path: str = ".data/polaris_pr_intel.db"
     llm_provider: str = "claude_code_local"
     llm_model: str = ""
-    openai_api_key: str = ""
-    gemini_api_key: str = ""
-    anthropic_api_key: str = ""
     claude_code_cmd: str = "claude"
     claude_code_timeout_sec: int = 300
     claude_code_max_turns: int = 15
@@ -114,9 +111,6 @@ def load_settings() -> Settings:
         sqlite_path=os.getenv("SQLITE_PATH", ".data/polaris_pr_intel.db"),
         llm_provider=os.getenv("LLM_PROVIDER", "claude_code_local").lower(),
         llm_model=os.getenv("LLM_MODEL", ""),
-        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-        gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
-        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         claude_code_cmd=os.getenv("CLAUDE_CODE_CMD", "claude"),
         claude_code_timeout_sec=_int_env("CLAUDE_CODE_TIMEOUT_SEC", 300),
         claude_code_max_turns=_int_env("CLAUDE_CODE_MAX_TURNS", 15),
