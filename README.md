@@ -151,6 +151,9 @@ PORT=9090 ./run.sh serve
 - `LLM_PROVIDER` (default: `claude_code_local`)
   - supported: `heuristic`, `openai`, `gemini`, `anthropic`, `claude_code_local`, `codex_local`
 - `LLM_MODEL` (optional; provider-specific default when unset)
+  - `codex_local` default: `gpt-5.4`
+  - known Codex model ids to use here: `gpt-5.4`, `gpt-5.4-mini`, `gpt-5-codex`
+  - model availability can vary by OpenAI/Codex account; check the OpenAI model docs if a configured id is rejected
 - `REVIEW_SKILL_FILE` (optional; skill used by individual PR review prompts)
 - `ANALYSIS_SKILL_FILE` (optional; skill used by post-sync report-analysis prompts)
 
@@ -167,7 +170,7 @@ Current limitation:
 - `CODEX_CMD` (default: `codex`)
 - `CODEX_TIMEOUT_SEC` (default: `900`)
 - `CODEX_MAX_TURNS` (default: `15`)
-- `CODEX_REASONING_EFFORT` (default: `medium`; supported: `low`, `medium`, `high`)
+- `CODEX_REASONING_EFFORT` (default: `medium`; passed through to `codex exec`, so valid values are model-specific)
 
 ### Scoring knobs
 - `REVIEW_NEEDED_THRESHOLD` (default: `2.0`)

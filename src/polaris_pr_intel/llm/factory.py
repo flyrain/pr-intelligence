@@ -51,7 +51,7 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
                 "Set it to an existing local directory for code review."
             )
         return CodexLocalAdapter(
-            model=settings.llm_model or "gpt-5-codex",
+            model=settings.llm_model or "gpt-5.4",
             command=settings.codex_cmd,
             timeout_sec=settings.codex_timeout_sec,
             max_turns=settings.codex_max_turns,

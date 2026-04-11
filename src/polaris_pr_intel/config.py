@@ -80,10 +80,7 @@ def _hour_env(name: str, default: int) -> int:
 
 
 def _codex_reasoning_effort_env(name: str, default: str) -> str:
-    value = os.getenv(name, default).strip().lower() or default
-    if value not in {"low", "medium", "high"}:
-        raise RuntimeError(f"{name} must be one of: low, medium, high")
-    return value
+    return os.getenv(name, default).strip().lower() or default
 
 
 def load_settings() -> Settings:

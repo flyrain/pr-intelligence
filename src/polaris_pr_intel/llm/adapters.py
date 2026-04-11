@@ -972,11 +972,11 @@ Pull requests:
 @dataclass
 class CodexLocalAdapter(HeuristicLLMAdapter):
     provider: str = "codex_local"
-    model: str = "gpt-5-codex"
+    model: str = "gpt-5.4"
     command: str = "codex"
-    timeout_sec: int = 300
+    timeout_sec: int = 900
     max_turns: int = 15
-    reasoning_effort: str = "high"
+    reasoning_effort: str = "medium"
     repo_dir: str = ""
     review_skill_file: str = ""
     analysis_skill_file: str = ""

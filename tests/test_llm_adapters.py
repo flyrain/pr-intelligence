@@ -223,7 +223,7 @@ def test_codex_local_adapter_logs_invocation_command(monkeypatch, caplog) -> Non
     assert "Invoking codex_local LLM command:" in caplog.text
     assert "codex exec --full-auto --skip-git-repo-check" in caplog.text
     assert "--output-last-message" in caplog.text
-    assert 'model_reasoning_effort="high"' in caplog.text
+    assert 'model_reasoning_effort="medium"' in caplog.text
     assert "<prompt>" in caplog.text
 
 
@@ -400,12 +400,26 @@ def test_codex_settings_defaults_favor_medium_effort_and_longer_timeout(monkeypa
     assert settings.codex_reasoning_effort == "medium"
 
 
-def test_factory_rejects_invalid_codex_reasoning_effort(monkeypatch) -> None:
+def test_codex_settings_allow_model_specific_reasoning_effort_values(monkeypatch) -> None:
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("CODEX_REASONING_EFFORT", "xhigh")
 
-    with pytest.raises(RuntimeError, match="CODEX_REASONING_EFFORT must be one of: low, medium, high"):
-        load_settings()
+    settings = load_settings()
+
+    assert settings.codex_reasoning_effort == "xhigh"
+
+
+def test_factory_defaults_codex_local_to_gpt_5_4(monkeypatch) -> None:
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
+    monkeypatch.setenv("LLM_PROVIDER", "codex_local")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/tmp")
+
+    settings = load_settings()
+    adapter = build_llm_adapter(settings)
+
+    assert adapter.provider == "codex_local"
+    assert adapter.model == "gpt-5.4"
 
 
 def test_factory_fails_for_invalid_codex_repo_dir(monkeypatch) -> None:
