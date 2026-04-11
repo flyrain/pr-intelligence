@@ -55,6 +55,7 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
             command=settings.codex_cmd,
             timeout_sec=settings.codex_timeout_sec,
             max_turns=settings.codex_max_turns,
+            reasoning_effort=settings.codex_reasoning_effort,
             repo_dir=repo_dir,
             review_skill_file=settings.review_skill_file,
             analysis_skill_file=settings.analysis_skill_file,

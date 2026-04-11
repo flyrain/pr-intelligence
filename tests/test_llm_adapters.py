@@ -221,8 +221,33 @@ def test_codex_local_adapter_logs_invocation_command(monkeypatch, caplog) -> Non
     adapter.analyze_catalog_routing(_pr())
 
     assert "Invoking codex_local LLM command:" in caplog.text
-    assert "codex exec --full-auto --skip-git-repo-check --output-last-message" in caplog.text
+    assert "codex exec --full-auto --skip-git-repo-check" in caplog.text
+    assert "--output-last-message" in caplog.text
+    assert 'model_reasoning_effort="high"' in caplog.text
     assert "<prompt>" in caplog.text
+
+
+def test_codex_local_adapter_passes_reasoning_effort_override_to_subprocess(monkeypatch) -> None:
+    adapter = CodexLocalAdapter(command="codex", model="gpt-5-codex", reasoning_effort="medium")
+    captured_cmd: list[str] | None = None
+
+    def _fake_run(cmd, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+
+        class R:
+            stdout = '{"verdict":"medium","score":0.55,"summary":"moderate risk in changed auth path","recommendations":["add coverage for auth edge cases"],"confidence":0.7}'
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    adapter.analyze_pr("code-risk", "code risk and complexity", _pr())
+
+    assert captured_cmd is not None
+    assert "-c" in captured_cmd
+    idx = captured_cmd.index("-c")
+    assert captured_cmd[idx + 1] == 'model_reasoning_effort="medium"'
 
 
 def test_codex_local_adapter_surfaces_sandboxed_codex_failure(monkeypatch) -> None:
@@ -246,6 +271,7 @@ def test_codex_local_adapter_strips_parent_codex_env(monkeypatch) -> None:
     adapter = CodexLocalAdapter(command="codex", model="gpt-5-codex")
     monkeypatch.setenv("CODEX_SANDBOX", "seatbelt")
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-123")
+    monkeypatch.setenv("CODEX_HOME", "/tmp/codex-home")
     monkeypatch.setenv("PATH", "/usr/bin")
     captured_env: dict[str, str] | None = None
 
@@ -266,7 +292,68 @@ def test_codex_local_adapter_strips_parent_codex_env(monkeypatch) -> None:
     assert captured_env is not None
     assert "CODEX_SANDBOX" not in captured_env
     assert "CODEX_THREAD_ID" not in captured_env
-    assert all(not key.startswith("CODEX_") for key in captured_env)
+    assert captured_env["CODEX_HOME"] == "/tmp/codex-home"
+    assert all(not key.startswith("CODEX_") for key in captured_env if key != "CODEX_HOME")
+
+
+def test_codex_local_adapter_comprehensive_fallback_does_not_retry_per_aspect(monkeypatch) -> None:
+    adapter = CodexLocalAdapter(command="codex")
+    calls = 0
+
+    def _fake_run_raw_prompt(prompt: str):
+        nonlocal calls
+        calls += 1
+        raise subprocess.CalledProcessError(returncode=1, cmd="codex", stderr="stream disconnected before completion")
+
+    monkeypatch.setattr(adapter, "_run_raw_prompt", _fake_run_raw_prompt)
+
+    findings = adapter.analyze_pr_comprehensive(_pr())
+
+    assert calls == 1
+    assert len(findings) == len(adapter.review_aspects)
+    assert all(not finding.summary.startswith("(fallback heuristic:") for finding in findings)
+
+
+def test_codex_local_adapter_self_review_skips_critique_if_initial_review_fails(monkeypatch, caplog) -> None:
+    adapter = CodexLocalAdapter(command="codex")
+    prompts: list[str] = []
+
+    def _fake_run_raw_prompt(prompt: str):
+        prompts.append(prompt)
+        raise subprocess.CalledProcessError(returncode=1, cmd="codex", stderr="stream disconnected before completion")
+
+    monkeypatch.setattr(adapter, "_run_raw_prompt", _fake_run_raw_prompt)
+    caplog.set_level(logging.WARNING)
+
+    findings = adapter.analyze_pr_with_self_review(_pr())
+
+    assert len(prompts) == 1
+    assert "Step 1 failed, falling back to heuristic" in caplog.text
+    assert "could not reach the Codex backend" in caplog.text
+    assert all(not finding.summary.startswith("(fallback heuristic:") for finding in findings)
+
+
+def test_codex_local_adapter_uses_last_message_output_even_on_nonzero_exit(monkeypatch) -> None:
+    adapter = CodexLocalAdapter(command="codex")
+
+    def _fake_run(args, **kwargs):
+        last_message_path = args[args.index("--output-last-message") + 1]
+        with open(last_message_path, "w", encoding="utf-8") as fh:
+            fh.write('{"verdict":"medium","score":0.55,"summary":"moderate risk in changed auth path","recommendations":["add coverage for auth edge cases"],"confidence":0.7}')
+
+        result = type("Result", (), {})()
+        result.returncode = 1
+        result.stdout = "OpenAI Codex v0.114.0"
+        result.stderr = "stream disconnected before completion"
+        result.args = args
+        return result
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    finding = adapter.analyze_pr("code-risk", "code risk and complexity", _pr())
+
+    assert finding.verdict == "medium"
+    assert finding.summary == "moderate risk in changed auth path"
 
 
 def test_factory_builds_codex_local_adapter(monkeypatch) -> None:
@@ -276,12 +363,22 @@ def test_factory_builds_codex_local_adapter(monkeypatch) -> None:
     monkeypatch.setenv("CODEX_CMD", "codex")
     monkeypatch.setenv("CODEX_TIMEOUT_SEC", "40")
     monkeypatch.setenv("CODEX_MAX_TURNS", "10")
+    monkeypatch.setenv("CODEX_REASONING_EFFORT", "medium")
     monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/tmp")
 
     settings = load_settings()
     adapter = build_llm_adapter(settings)
     assert adapter.provider == "codex_local"
     assert adapter.model == "gpt-5-codex"
+    assert adapter.reasoning_effort == "medium"
+
+
+def test_factory_rejects_invalid_codex_reasoning_effort(monkeypatch) -> None:
+    monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
+    monkeypatch.setenv("CODEX_REASONING_EFFORT", "xhigh")
+
+    with pytest.raises(RuntimeError, match="CODEX_REASONING_EFFORT must be one of: low, medium, high"):
+        load_settings()
 
 
 def test_factory_fails_for_invalid_codex_repo_dir(monkeypatch) -> None:

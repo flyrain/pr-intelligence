@@ -42,6 +42,7 @@ class Settings:
     codex_cmd: str = "codex"
     codex_timeout_sec: int = 300
     codex_max_turns: int = 15
+    codex_reasoning_effort: str = "high"
     analysis_top_slice_limit: int = 10
     enable_periodic_refresh: bool = True
     refresh_timezone: str = ""
@@ -75,6 +76,13 @@ def _hour_env(name: str, default: int) -> int:
     value = _int_env(name, default)
     if not 0 <= value <= 23:
         raise RuntimeError(f"{name} must be between 0 and 23")
+    return value
+
+
+def _codex_reasoning_effort_env(name: str, default: str) -> str:
+    value = os.getenv(name, default).strip().lower() or default
+    if value not in {"low", "medium", "high"}:
+        raise RuntimeError(f"{name} must be one of: low, medium, high")
     return value
 
 
@@ -143,6 +151,7 @@ def load_settings() -> Settings:
         codex_cmd=os.getenv("CODEX_CMD", "codex"),
         codex_timeout_sec=_int_env("CODEX_TIMEOUT_SEC", 300),
         codex_max_turns=_int_env("CODEX_MAX_TURNS", 15),
+        codex_reasoning_effort=_codex_reasoning_effort_env("CODEX_REASONING_EFFORT", "high"),
         analysis_top_slice_limit=_int_env("ANALYSIS_TOP_SLICE_LIMIT", 10),
         enable_periodic_refresh=os.getenv("ENABLE_PERIODIC_REFRESH", "true").lower() in ("true", "1", "yes"),
         refresh_timezone=os.getenv("REFRESH_TIMEZONE", "").strip(),

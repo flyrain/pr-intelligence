@@ -100,8 +100,9 @@ def _codex_subprocess_env() -> dict[str, str]:
     # `CODEX_THREAD_ID` are present for the parent session. Passing them through to
     # a fresh nested `codex exec` can confuse the child CLI into booting with
     # parent-session sandbox/runtime state instead of starting a clean run.
+    # Preserve `CODEX_HOME` so callers can isolate nested Codex state/log files.
     for key in list(env):
-        if key.startswith("CODEX_"):
+        if key.startswith("CODEX_") and key != "CODEX_HOME":
             env.pop(key, None)
     return env
 
@@ -124,7 +125,7 @@ class HeuristicLLMAdapter:
                 ("security-signal", "security and permission model"),
             ]
 
-    def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
+    def _heuristic_analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
         churn = pr.additions + pr.deletions
         score = 0.5
         reasons: list[str] = []
@@ -188,22 +189,34 @@ class HeuristicLLMAdapter:
             confidence=0.65,
         )
 
-    def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
-        """Comprehensive PR review covering all aspects. Uses review_aspects from skill or defaults."""
+    def analyze_pr(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> PRSubagentFinding:
+        return self._heuristic_analyze_pr(agent_name, focus_area, pr)
+
+    def _heuristic_analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
         return [
-            self.analyze_pr(agent_name, focus_area, pr)
+            self._heuristic_analyze_pr(agent_name, focus_area, pr)
             for agent_name, focus_area in self.review_aspects
         ]
+
+    def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
+        """Comprehensive PR review covering all aspects. Uses review_aspects from skill or defaults."""
+        return self._heuristic_analyze_pr_comprehensive(pr)
 
     def analyze_pr_with_self_review(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
         """Three-step self-review: generate → critique → revise. Base implementation just calls comprehensive."""
         return self.analyze_pr_comprehensive(pr)
 
+    def _heuristic_analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
+        return self._heuristic_analyze_pr("catalog-router", "catalog routing and prioritization", pr)
+
     def analyze_catalog_routing(self, pr: PullRequestSnapshot) -> PRSubagentFinding:
-        return self.analyze_pr("catalog-router", "catalog routing and prioritization", pr)
+        return self._heuristic_analyze_catalog_routing(pr)
+
+    def _heuristic_analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]) -> dict[int, PRSubagentFinding]:
+        return {pr.number: self._heuristic_analyze_catalog_routing(pr) for pr in prs}
 
     def analyze_catalog_routing_batch(self, prs: list[PullRequestSnapshot]) -> dict[int, PRSubagentFinding]:
-        return {pr.number: self.analyze_catalog_routing(pr) for pr in prs}
+        return self._heuristic_analyze_catalog_routing_batch(prs)
 
     def analyze_attention_batch(self, contexts: list[PRAttentionContext]) -> dict[int, PRAttentionDecision]:
         decisions: dict[int, PRAttentionDecision] = {}
@@ -963,6 +976,7 @@ class CodexLocalAdapter(HeuristicLLMAdapter):
     command: str = "codex"
     timeout_sec: int = 300
     max_turns: int = 15
+    reasoning_effort: str = "high"
     repo_dir: str = ""
     review_skill_file: str = ""
     analysis_skill_file: str = ""
@@ -1027,6 +1041,20 @@ class CodexLocalAdapter(HeuristicLLMAdapter):
             stdout = (exc.stdout or "").strip().replace("\n", " ")
             detail = stderr or stdout or detail
         lowered = detail.lower()
+        if "stream disconnected before completion" in lowered:
+            return (
+                "codex_local CLI started but could not reach the Codex backend from this runtime. "
+                "Check network/auth for the service environment or switch providers."
+            )
+        if (
+            "failed to open state db" in lowered
+            or ("migration" in lowered and "missing in the resolved migrations" in lowered)
+            or ("/.codex" in detail and "operation not permitted" in lowered)
+        ):
+            return (
+                "codex_local CLI could not initialize or access its local Codex state in this runtime. "
+                "Use a clean CODEX_HOME or run the service from a normal terminal."
+            )
         if "attempted to create a null object" in lowered or "could not create otel exporter" in lowered:
             return (
                 "codex_local CLI crashed before producing output. This commonly happens when the API "
@@ -1187,31 +1215,33 @@ PR description:
             fallback.summary = f"(fallback heuristic: {type(exc).__name__}: {detail[:160]}) {fallback.summary}"
             return fallback
 
+    def _run_comprehensive_review(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
+        prompt = self._build_comprehensive_prompt(pr)
+        payload = self._run_raw_prompt(prompt)
+        if not isinstance(payload, dict):
+            raise ValueError("Expected JSON object from model")
+        findings_data = payload.get("findings")
+        if not isinstance(findings_data, list):
+            raise ValueError("Expected 'findings' array in response")
+
+        findings: list[PRSubagentFinding] = []
+        for item in findings_data:
+            if not isinstance(item, dict):
+                continue
+            finding = PRSubagentFinding.model_validate(item)
+            finding.score = _clamp(finding.score, 0.0, 1.0)
+            finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
+            findings.append(finding)
+
+        if not findings:
+            raise ValueError("No valid findings extracted from response")
+        return findings
+
     def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
         """Run comprehensive single-pass review covering all aspects."""
-        prompt = self._build_comprehensive_prompt(pr)
         try:
-            payload = self._run_raw_prompt(prompt)
-            if not isinstance(payload, dict):
-                raise ValueError("Expected JSON object from model")
-            findings_data = payload.get("findings")
-            if not isinstance(findings_data, list):
-                raise ValueError("Expected 'findings' array in response")
-
-            findings: list[PRSubagentFinding] = []
-            for item in findings_data:
-                if not isinstance(item, dict):
-                    continue
-                finding = PRSubagentFinding.model_validate(item)
-                finding.score = _clamp(finding.score, 0.0, 1.0)
-                finding.confidence = _clamp(finding.confidence, 0.0, 1.0)
-                findings.append(finding)
-
-            if not findings:
-                raise ValueError("No valid findings extracted from response")
-            return findings
-        except Exception as exc:
-            # Fallback to heuristic multi-finding
+            return self._run_comprehensive_review(pr)
+        except Exception:
             return super().analyze_pr_comprehensive(pr)
 
     def analyze_pr_with_self_review(self, pr: PullRequestSnapshot) -> list[PRSubagentFinding]:
@@ -1220,9 +1250,9 @@ PR description:
 
         # Step 1: Generate initial review
         try:
-            initial_findings = self.analyze_pr_comprehensive(pr)
+            initial_findings = self._run_comprehensive_review(pr)
         except Exception as exc:
-            logger.warning("Step 1 failed, falling back to heuristic: %s", exc)
+            logger.warning("Step 1 failed, falling back to heuristic: %s", self._format_failure_detail(exc))
             return super().analyze_pr_comprehensive(pr)
 
         # Step 2: Critique the initial review
@@ -1240,7 +1270,7 @@ PR description:
                 return initial_findings
 
         except Exception as exc:
-            logger.warning("Step 2 (critique) failed, using initial findings: %s", exc)
+            logger.warning("Step 2 (critique) failed, using initial findings: %s", self._format_failure_detail(exc))
             return initial_findings
 
         # Step 3: Revise based on critique
@@ -1274,7 +1304,7 @@ PR description:
             return revised_findings
 
         except Exception as exc:
-            logger.warning("Step 3 (revision) failed, using initial findings: %s", exc)
+            logger.warning("Step 3 (revision) failed, using initial findings: %s", self._format_failure_detail(exc))
             return initial_findings
 
     def _build_critique_prompt(self, pr: PullRequestSnapshot, findings: list[PRSubagentFinding]) -> str:
@@ -1516,6 +1546,8 @@ Pull requests:
                 "exec",
                 "--full-auto",
                 "--skip-git-repo-check",
+                "-c",
+                f'model_reasoning_effort="{self.reasoning_effort}"',
                 "--output-last-message",
                 last_message_path,
             ]
@@ -1525,7 +1557,7 @@ Pull requests:
             cmd.append(prompt)
             proc = subprocess.run(
                 cmd,
-                check=True,
+                check=False,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_sec,
@@ -1538,7 +1570,24 @@ Pull requests:
                     raw_output = Path(last_message_path).read_text(encoding="utf-8").strip()
                 except Exception:
                     raw_output = ""
-            return ClaudeCodeLocalAdapter._extract_json_payload(raw_output or proc.stdout)
+            stdout = getattr(proc, "stdout", "")
+            stderr = getattr(proc, "stderr", "")
+            returncode = getattr(proc, "returncode", 0)
+            source = raw_output or stdout
+            if source:
+                try:
+                    return ClaudeCodeLocalAdapter._extract_json_payload(source)
+                except ValueError:
+                    if returncode == 0:
+                        raise
+            if returncode != 0:
+                raise subprocess.CalledProcessError(
+                    returncode=returncode,
+                    cmd=getattr(proc, "args", cmd),
+                    output=stdout,
+                    stderr=stderr,
+                )
+            raise ValueError("No valid JSON payload found in model output")
         finally:
             if last_message_path:
                 try:
