@@ -905,6 +905,7 @@ def create_app(
         const data = await res.json();
         if (data.ok && data.accepted) {{
           btn.textContent = "Queued";
+          setTimeout(() => window.location.reload(), 300);
         }} else {{
           btn.textContent = "Failed";
           console.error("review enqueue failed", data);
