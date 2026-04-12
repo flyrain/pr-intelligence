@@ -12,7 +12,7 @@ from polaris_pr_intel.models import PRSubagentFinding, PullRequestSnapshot
 @dataclass
 class ClaudeCodeLocalAdapter(BaseLocalCLIAdapter):
     provider: str = "claude_code_local"
-    model: str = "claude-code-local"
+    model: str = "opus"
     command: str = "claude"
     timeout_sec: int = 300
     max_turns: int = 15
@@ -236,7 +236,7 @@ Routing guidance:
             "--setting-sources",
             "user,project,local",
         ]
-        if self.model and self.model not in {"claude-code-local", "local-heuristic"}:
+        if self.model and self.model not in {"local-heuristic"}:
             cmd.extend(["--model", self.model])
         self._log_cli_invocation(cmd, prompt)
         cmd.append(prompt)

@@ -29,6 +29,10 @@ License: Apache-2.0. See [LICENSE](LICENSE).
 
 export PR_INTEL_GITHUB_TOKEN=your_read_only_token
 export LOCAL_REVIEW_REPO_DIR=/path/to/apache/polaris
+
+# Optional: configure model (defaults to 'opus' for claude_code_local, 'gpt-5.4' for codex_local)
+# export LLM_MODEL=sonnet  # or opus[1m], haiku, etc.
+
 ./run.sh serve
 ```
 
@@ -152,9 +156,11 @@ PORT=9090 ./run.sh serve
   - supported: `heuristic`, `claude_code_local`, `codex_local`
   - `heuristic` means rule-based local scoring/review only; it does not call Claude, Codex, or any hosted LLM
 - `LLM_MODEL` (optional; provider-specific default when unset)
+  - `claude_code_local` default: `opus`
+    - Valid values: `opus`, `sonnet`, `haiku`, `opus[1m]`, `sonnet[1m]`, `opusplan`
+    - Or specific versions: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, etc.
   - `codex_local` default: `gpt-5.4`
-  - known Codex model ids to use here: `gpt-5.4`, `gpt-5.4-mini`, `gpt-5-codex`
-  - model availability can vary by OpenAI/Codex account; check the OpenAI model docs if a configured id is rejected
+    - Valid values: `gpt-5.4`, `gpt-5.4-mini`, `gpt-5-codex` (model availability varies by account)
 - `REVIEW_SKILL_FILE` (optional; skill used by individual PR review prompts)
 - `ANALYSIS_SKILL_FILE` (optional; skill used by post-sync report-analysis prompts)
 

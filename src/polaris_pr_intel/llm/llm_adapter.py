@@ -40,15 +40,17 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
                 f"LOCAL_REVIEW_REPO_DIR is invalid: {repo_dir!r}. "
                 "Set it to an existing local directory for code review."
             )
-        return ClaudeCodeLocalAdapter(
-            model=settings.llm_model or "claude-code-local",
-            command=settings.claude_code_cmd,
-            timeout_sec=settings.claude_code_timeout_sec,
-            max_turns=settings.claude_code_max_turns,
-            repo_dir=repo_dir,
-            review_skill_file=settings.review_skill_file or settings.claude_code_skill_file,
-            analysis_skill_file=settings.analysis_skill_file,
-        )
+        adapter_kwargs = {
+            "command": settings.claude_code_cmd,
+            "timeout_sec": settings.claude_code_timeout_sec,
+            "max_turns": settings.claude_code_max_turns,
+            "repo_dir": repo_dir,
+            "review_skill_file": settings.review_skill_file or settings.claude_code_skill_file,
+            "analysis_skill_file": settings.analysis_skill_file,
+        }
+        if settings.llm_model:
+            adapter_kwargs["model"] = settings.llm_model
+        return ClaudeCodeLocalAdapter(**adapter_kwargs)
     if provider == "codex_local":
         from polaris_pr_intel.llm._codex_local import CodexLocalAdapter
 
@@ -60,15 +62,17 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
                 f"LOCAL_REVIEW_REPO_DIR is invalid: {repo_dir!r}. "
                 "Set it to an existing local directory for code review."
             )
-        return CodexLocalAdapter(
-            model=settings.llm_model or "gpt-5.4",
-            command=settings.codex_cmd,
-            timeout_sec=settings.codex_timeout_sec,
-            max_turns=settings.codex_max_turns,
-            reasoning_effort=settings.codex_reasoning_effort,
-            repo_dir=repo_dir,
-            review_skill_file=settings.review_skill_file,
-            analysis_skill_file=settings.analysis_skill_file,
-        )
+        adapter_kwargs = {
+            "command": settings.codex_cmd,
+            "timeout_sec": settings.codex_timeout_sec,
+            "max_turns": settings.codex_max_turns,
+            "reasoning_effort": settings.codex_reasoning_effort,
+            "repo_dir": repo_dir,
+            "review_skill_file": settings.review_skill_file,
+            "analysis_skill_file": settings.analysis_skill_file,
+        }
+        if settings.llm_model:
+            adapter_kwargs["model"] = settings.llm_model
+        return CodexLocalAdapter(**adapter_kwargs)
     supported = ", ".join(SUPPORTED_LLM_PROVIDERS)
     raise RuntimeError(f"Unsupported LLM_PROVIDER={provider!r}. Supported values: {supported}")
