@@ -73,6 +73,8 @@ def build_runtime():
         settings=settings,
         webhook_secret=settings.github_webhook_secret,
         scheduler=scheduler,
+        llm_provider=llm.provider,
+        llm_model=llm.model,
     )
     app.add_event_handler("startup", scheduler.start)
     app.add_event_handler("shutdown", scheduler.stop)

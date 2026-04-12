@@ -54,6 +54,8 @@ def create_app(
     settings: Settings | None = None,
     webhook_secret: str = "",
     scheduler: "PeriodicRefreshScheduler | None" = None,
+    llm_provider: str = "",
+    llm_model: str = "",
 ) -> FastAPI:
     app = FastAPI(title="Polaris PR Intelligence")
 
@@ -71,12 +73,9 @@ def create_app(
     review_job_workers = max(1, int(os.getenv("REVIEW_JOB_WORKERS", "1")))
     review_job_timeout_sec = int(os.getenv("REVIEW_JOB_TIMEOUT_SEC", "1200"))
     app_settings = settings or Settings(github_token="")
-    configured_llm_model = (app_settings.llm_model or "").strip()
     configured_llm_display = (
-        f"{app_settings.llm_provider} / {configured_llm_model}"
-        if configured_llm_model
-        else app_settings.llm_provider
-    )
+        f"{llm_provider} / {llm_model}" if llm_model else llm_provider
+    ) if llm_provider else app_settings.llm_provider
     review_target_login = app_settings.review_target_login.strip().lower()
     review_need_agent = getattr(event_graph, "review_need", ReviewNeedAgent(app_settings))
     issue_insight_agent = getattr(event_graph, "issue_insight", IssueInsightAgent(app_settings))

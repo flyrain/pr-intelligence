@@ -656,7 +656,7 @@ def render_dashboard_page(
             <img class="brand-logo" src="/docs-static/orca.png" alt="Orca logo" />
             <div class="brand-copy">
 	          <h1>PR Intelligence</h1>
-	          <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
+	          <p class="muted">{escape(configured_llm_display)}</p>
             </div>
           </div>
           <article class="status-item status-last">
