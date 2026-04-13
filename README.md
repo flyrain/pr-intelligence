@@ -15,7 +15,7 @@ export PR_INTEL_GITHUB_TOKEN=your_github_token  # config
 # Optional configs (with defaults):
 export GITHUB_OWNER=apache              # Repository owner
 export GITHUB_REPO=polaris              # Repository name
-export REVIEW_TARGET_LOGIN=flyrain
+export REVIEW_TARGET_LOGIN=your_github_id
 export LLM_PROVIDER=claude_code_local   # or codex_local, heuristic
 export LLM_MODEL=opus                   # Provider-specific model
 
