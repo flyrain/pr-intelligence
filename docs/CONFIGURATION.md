@@ -6,9 +6,38 @@ This document covers all environment variables available in PR Intelligence.
 
 ### Required
 - **`PR_INTEL_GITHUB_TOKEN`** - GitHub API token (read-only is sufficient)
-- **`LOCAL_REVIEW_REPO_DIR`** - Required when using local CLI providers (`claude_code_local` or `codex_local`). Path to a git clone of the repository you're monitoring.
+
+**That's it!** The system automatically manages repository access.
 
 Note: `PR_INTEL_GITHUB_TOKEN` is the preferred project-specific variable. `GITHUB_TOKEN` is still accepted as a backward-compatible fallback.
+
+## Repository Management
+
+PR Intelligence automatically manages repository access:
+
+1. **Auto-detection**: If running inside the target repository, uses that directory
+2. **Auto-clone**: Otherwise, clones to `~/.cache/pr-intel/repos/{owner}-{repo}`
+3. **Worktrees**: Creates isolated worktrees for each PR review (enabled by default)
+
+### Optional Overrides
+
+- **`GIT_REPO_PATH`** (optional) - Explicit path to use instead of auto-detection
+  - Example: `/Users/you/code/polaris`
+  - Overrides all auto-detection
+  - For backward compatibility, `LOCAL_REVIEW_REPO_DIR` still works
+
+- **`REPO_CACHE_DIR`** (optional) - Custom cache directory for auto-cloned repos
+  - Default: `~/.cache/pr-intel/repos`
+  - Example: `/tmp/pr-intel-cache`
+
+- **`USE_WORKTREES`** (default: `true`) - Enable worktree isolation for PR reviews
+  - When enabled, each PR review runs in its own isolated worktree
+  - Allows parallel reviews without conflicts
+  - Set to `false` to use traditional single-directory mode
+
+- **`WORKTREE_BASE_DIR`** (optional) - Custom directory for worktrees
+  - Default: `{repo}/.worktrees`
+  - Example: `/tmp/pr-worktrees`
 
 ## Repository Settings
 

@@ -35,7 +35,6 @@ class Settings:
     review_skill_file: str = ""
     analysis_skill_file: str = ""
     claude_code_skill_file: str = ""
-    local_review_repo_dir: str = ""
     codex_cmd: str = "codex"
     codex_timeout_sec: int = 900
     codex_max_turns: int = 15
@@ -47,6 +46,10 @@ class Settings:
     refresh_start_hour_local: int = 8
     refresh_end_hour_local: int = 23
     enable_self_review: bool = True
+    git_repo_path: str = ""  # Optional override for base repo location
+    repo_cache_dir: str = ""  # Where to cache auto-cloned repos
+    use_worktrees: bool = True  # Use worktrees for isolated reviews (default: enabled)
+    worktree_base_dir: str = ""
 
 
 def _float_env(name: str, default: float) -> float:
@@ -134,11 +137,6 @@ def load_settings() -> Settings:
                 os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "skills", "polaris-pr-review", "skill.md"),
             ),
         ),
-        local_review_repo_dir=(
-            os.getenv("LOCAL_REVIEW_REPO_DIR", "").strip()
-            or os.getenv("CLAUDE_CODE_REPO_DIR", "").strip()
-            or os.getenv("CODEX_REPO_DIR", "").strip()
-        ),
         codex_cmd=os.getenv("CODEX_CMD", "codex"),
         codex_timeout_sec=_int_env("CODEX_TIMEOUT_SEC", 900),
         codex_max_turns=_int_env("CODEX_MAX_TURNS", 15),
@@ -150,4 +148,13 @@ def load_settings() -> Settings:
         refresh_start_hour_local=_hour_env("REFRESH_START_HOUR_LOCAL", 8),
         refresh_end_hour_local=_hour_env("REFRESH_END_HOUR_LOCAL", 23),
         enable_self_review=os.getenv("ENABLE_SELF_REVIEW", "true").lower() in ("true", "1", "yes"),
+        git_repo_path=(
+            os.getenv("GIT_REPO_PATH", "").strip()
+            or os.getenv("LOCAL_REVIEW_REPO_DIR", "").strip()  # Backward compat
+            or os.getenv("CLAUDE_CODE_REPO_DIR", "").strip()
+            or os.getenv("CODEX_REPO_DIR", "").strip()
+        ),
+        repo_cache_dir=os.getenv("REPO_CACHE_DIR", "").strip(),
+        use_worktrees=os.getenv("USE_WORKTREES", os.getenv("ENABLE_WORKTREE_PER_PR", "true")).lower() in ("true", "1", "yes"),
+        worktree_base_dir=os.getenv("WORKTREE_BASE_DIR", "").strip(),
     )

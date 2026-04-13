@@ -112,13 +112,18 @@ def test_claude_code_local_adapter_raises_on_auth_failure(monkeypatch) -> None:
         adapter.analyze_pr("security-signal", "security and permission model", _pr())
 
 
-def test_factory_builds_claude_code_local_adapter(monkeypatch) -> None:
+def test_factory_builds_claude_code_local_adapter(tmp_path, monkeypatch) -> None:
+    # Create a fake git repo for testing
+    fake_repo = tmp_path / "test-repo"
+    fake_repo.mkdir()
+    (fake_repo / ".git").mkdir()
+
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")
     monkeypatch.setenv("LLM_MODEL", "claude-local")
     monkeypatch.setenv("CLAUDE_CODE_CMD", "claude")
     monkeypatch.setenv("CLAUDE_CODE_TIMEOUT_SEC", "30")
-    monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/tmp")
+    monkeypatch.setenv("GIT_REPO_PATH", str(fake_repo))
 
     settings = load_settings()
     adapter = build_llm_adapter(settings)
@@ -126,21 +131,46 @@ def test_factory_builds_claude_code_local_adapter(monkeypatch) -> None:
     assert adapter.model == "claude-local"
 
 
-def test_factory_fails_for_empty_repo_dir(monkeypatch) -> None:
+def test_factory_auto_manages_repo_when_no_explicit_path(monkeypatch, tmp_path) -> None:
+    """Test that empty GIT_REPO_PATH triggers auto-management."""
+    # Mock the RepositoryManager to avoid actual clone
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
+    monkeypatch.setenv("GITHUB_OWNER", "test-owner")
+    monkeypatch.setenv("GITHUB_REPO", "test-repo")
     monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")
-    monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "   ")
+    monkeypatch.setenv("GIT_REPO_PATH", "")  # Empty - should trigger auto mode
+
+    # Mock cache dir to avoid actual clone
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    fake_repo = cache_dir / "test-owner-test-repo"
+    fake_repo.mkdir()
+    (fake_repo / ".git").mkdir()
+
+    monkeypatch.setenv("REPO_CACHE_DIR", str(cache_dir))
+
+    # Mock git commands to avoid actual operations
+    def mock_run(*args, **kwargs):
+        class MockResult:
+            stdout = "main"
+            stderr = ""
+            returncode = 0
+        return MockResult()
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
     settings = load_settings()
-    with pytest.raises(RuntimeError, match="LOCAL_REVIEW_REPO_DIR must not be empty"):
-        build_llm_adapter(settings)
+    adapter = build_llm_adapter(settings)
+    assert adapter.provider == "claude_code_local"
 
 
-def test_factory_fails_for_invalid_repo_dir(monkeypatch) -> None:
+def test_factory_fails_for_invalid_explicit_repo_path(monkeypatch) -> None:
+    """Test that explicitly provided invalid path fails."""
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "claude_code_local")
-    monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/path/that/does/not/exist")
+    monkeypatch.setenv("GIT_REPO_PATH", "/path/that/does/not/exist/at/all")
     settings = load_settings()
-    with pytest.raises(RuntimeError, match="LOCAL_REVIEW_REPO_DIR is invalid"):
+    with pytest.raises(RuntimeError, match="does not exist"):
         build_llm_adapter(settings)
 
 
@@ -373,7 +403,12 @@ def test_codex_local_adapter_uses_last_message_output_even_on_nonzero_exit(monke
     assert finding.summary == "moderate risk in changed auth path"
 
 
-def test_factory_builds_codex_local_adapter(monkeypatch) -> None:
+def test_factory_builds_codex_local_adapter(tmp_path, monkeypatch) -> None:
+    # Create a fake git repo for testing
+    fake_repo = tmp_path / "test-repo"
+    fake_repo.mkdir()
+    (fake_repo / ".git").mkdir()
+
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "codex_local")
     monkeypatch.setenv("LLM_MODEL", "gpt-5-codex")
@@ -381,7 +416,7 @@ def test_factory_builds_codex_local_adapter(monkeypatch) -> None:
     monkeypatch.setenv("CODEX_TIMEOUT_SEC", "40")
     monkeypatch.setenv("CODEX_MAX_TURNS", "10")
     monkeypatch.setenv("CODEX_REASONING_EFFORT", "medium")
-    monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/tmp")
+    monkeypatch.setenv("GIT_REPO_PATH", str(fake_repo))
 
     settings = load_settings()
     adapter = build_llm_adapter(settings)
@@ -410,11 +445,16 @@ def test_codex_settings_allow_model_specific_reasoning_effort_values(monkeypatch
     assert settings.codex_reasoning_effort == "xhigh"
 
 
-def test_factory_defaults_codex_local_to_gpt_5_4(monkeypatch) -> None:
+def test_factory_defaults_codex_local_to_gpt_5_4(tmp_path, monkeypatch) -> None:
+    # Create a fake git repo for testing
+    fake_repo = tmp_path / "test-repo"
+    fake_repo.mkdir()
+    (fake_repo / ".git").mkdir()
+
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "codex_local")
     monkeypatch.delenv("LLM_MODEL", raising=False)
-    monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/tmp")
+    monkeypatch.setenv("GIT_REPO_PATH", str(fake_repo))
 
     settings = load_settings()
     adapter = build_llm_adapter(settings)
@@ -424,11 +464,12 @@ def test_factory_defaults_codex_local_to_gpt_5_4(monkeypatch) -> None:
 
 
 def test_factory_fails_for_invalid_codex_repo_dir(monkeypatch) -> None:
+    """Test that explicitly provided invalid path fails for codex too."""
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "codex_local")
-    monkeypatch.setenv("LOCAL_REVIEW_REPO_DIR", "/path/that/does/not/exist")
+    monkeypatch.setenv("GIT_REPO_PATH", "/path/that/does/not/exist/at/all")
     settings = load_settings()
-    with pytest.raises(RuntimeError, match="LOCAL_REVIEW_REPO_DIR is invalid"):
+    with pytest.raises(RuntimeError, match="does not exist"):
         build_llm_adapter(settings)
 
 
@@ -443,11 +484,18 @@ def test_factory_rejects_unsupported_provider(monkeypatch, provider: str) -> Non
         build_llm_adapter(settings)
 
 
-def test_factory_backward_compat_old_repo_dir_vars(monkeypatch) -> None:
+def test_factory_backward_compat_old_repo_dir_vars(tmp_path, monkeypatch) -> None:
+    """Test that old LOCAL_REVIEW_REPO_DIR and CODEX_REPO_DIR still work."""
+    # Create a fake git repo for testing
+    fake_repo = tmp_path / "test-repo"
+    fake_repo.mkdir()
+    (fake_repo / ".git").mkdir()
+
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.setenv("LLM_PROVIDER", "codex_local")
     monkeypatch.delenv("LOCAL_REVIEW_REPO_DIR", raising=False)
-    monkeypatch.setenv("CODEX_REPO_DIR", "/tmp")
+    monkeypatch.delenv("GIT_REPO_PATH", raising=False)
+    monkeypatch.setenv("CODEX_REPO_DIR", str(fake_repo))  # Old variable
     settings = load_settings()
     adapter = build_llm_adapter(settings)
     assert adapter.provider == "codex_local"

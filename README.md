@@ -29,15 +29,19 @@ Set required environment variables:
 
 ```bash
 export PR_INTEL_GITHUB_TOKEN=your_github_token
-export LOCAL_REVIEW_REPO_DIR=/path/to/local/repo  # For Claude/Codex providers
 ```
+
+That's it! The system will automatically:
+- Detect if you're running inside the repository
+- Or clone the repo to `~/.cache/pr-intel/repos/` if needed
 
 Optional (with defaults):
 ```bash
-export GITHUB_OWNER=apache          # Repository owner
-export GITHUB_REPO=polaris          # Repository name
-export LLM_PROVIDER=claude_code_local  # or codex_local, heuristic
-export LLM_MODEL=opus               # Provider-specific model
+export GITHUB_OWNER=apache              # Repository owner
+export GITHUB_REPO=polaris              # Repository name
+export LLM_PROVIDER=claude_code_local   # or codex_local, heuristic
+export LLM_MODEL=opus                   # Provider-specific model
+export GIT_REPO_PATH=/custom/path       # Override auto-detection
 ```
 
 See [Configuration Reference](docs/CONFIGURATION.md) for all options.
@@ -135,27 +139,27 @@ See [Architecture](docs/ARCHITECTURE.md) for detailed diagrams and code layout.
 
 ### claude_code_local (Default)
 
-Uses local Claude Code CLI for code-aware analysis.
+Uses local Claude Code CLI for code-aware analysis with automatic repository management.
 
 ```bash
 export LLM_PROVIDER=claude_code_local
 export LLM_MODEL=opus  # or sonnet, haiku
-export LOCAL_REVIEW_REPO_DIR=/path/to/repo
+# Repository automatically managed - no manual setup needed!
 ```
 
 ### codex_local
 
-Uses local Codex CLI for code-aware analysis.
+Uses local Codex CLI for code-aware analysis with automatic repository management.
 
 ```bash
 export LLM_PROVIDER=codex_local
 export LLM_MODEL=gpt-5.4  # or gpt-5.4-mini
-export LOCAL_REVIEW_REPO_DIR=/path/to/repo
+# Repository automatically managed - no manual setup needed!
 ```
 
 ### heuristic
 
-Rule-based scoring and analysis (no LLM calls).
+Rule-based scoring and analysis (no LLM calls, no repository needed).
 
 ```bash
 export LLM_PROVIDER=heuristic
@@ -255,8 +259,8 @@ See [Troubleshooting Guide](docs/TROUBLESHOOTING.md) for complete solutions.
 
 - Python 3.11+
 - GitHub token (read-only is sufficient)
-- Local git clone of monitored repo (for Claude/Codex providers)
 - Claude Code or Codex CLI (for respective providers)
+- Git (for automatic repository management)
 
 ## License
 
