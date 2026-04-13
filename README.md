@@ -2,14 +2,10 @@
 
 An intelligent GitHub repository monitoring service that uses LangGraph and LLM agents to automate PR review prioritization, issue tracking, and reporting.
 
-## Features
-
 - **Smart PR Prioritization** - Scores PRs based on staleness, activity, size, and review requests
 - **Multi-Provider LLM Support** - Claude Code, Codex, or rule-based analysis
-- **Automated Reports** - Daily attention reports highlighting what needs review
-- **Deep PR Reviews** - Multi-turn LLM analysis with subagents
+- **Deep PR Reviews** - Multi-turn LLM analysis with sub agents
 - **Periodic Refresh** - Automatic sync during configurable time windows
-- **REST API** - Full API with web dashboard and async review queue
 
 ## Quick Start
 ```bash
