@@ -702,19 +702,41 @@ def render_dashboard_page(
 
     async function copyResumeCommand(btn) {{
       const original = btn.textContent;
+      const text = btn.dataset.resumeCommand || "";
       btn.disabled = true;
+      let ok = false;
       try {{
-        await navigator.clipboard.writeText(btn.dataset.resumeCommand || "");
-        btn.textContent = "Copied";
+        if (navigator.clipboard && window.isSecureContext) {{
+          await navigator.clipboard.writeText(text);
+          ok = true;
+        }}
       }} catch (e) {{
-        btn.textContent = "Copy Failed";
         console.error(e);
-      }} finally {{
-        setTimeout(() => {{
-          btn.disabled = false;
-          btn.textContent = original;
-        }}, 1800);
       }}
+      if (!ok) {{
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.top = "0";
+        ta.style.left = "0";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        try {{
+          ta.focus();
+          ta.select();
+          ok = document.execCommand("copy");
+        }} catch (e) {{
+          console.error(e);
+        }} finally {{
+          document.body.removeChild(ta);
+        }}
+      }}
+      btn.textContent = ok ? "Copied" : "Copy Failed";
+      setTimeout(() => {{
+        btn.disabled = false;
+        btn.textContent = original;
+      }}, 1800);
     }}
 
     function formatDuration(totalSeconds) {{
