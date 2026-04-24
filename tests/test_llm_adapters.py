@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import logging
+import threading
 import subprocess
+import time
 
 import pytest
 
+from polaris_pr_intel.agents.pr_reviewer import PRSubagentReviewer
 from polaris_pr_intel.config import load_settings
 from polaris_pr_intel.llm import build_llm_adapter
 from polaris_pr_intel.llm._base_local_cli import BaseLocalCLIAdapter
 from polaris_pr_intel.llm._claude_code_local import ClaudeCodeLocalAdapter
 from polaris_pr_intel.llm._codex_local import CodexLocalAdapter
+from polaris_pr_intel.llm.llm_adapter import _wrap_method_with_worktree
 from polaris_pr_intel.models import PullRequestSnapshot
 
 
@@ -254,6 +258,7 @@ def test_codex_local_adapter_logs_invocation_command(monkeypatch, caplog) -> Non
 
     assert "Invoking codex_local LLM command:" in caplog.text
     assert "codex exec --full-auto --skip-git-repo-check" in caplog.text
+    assert "--json" in caplog.text
     assert "--output-last-message" in caplog.text
     assert 'model_reasoning_effort="medium"' in caplog.text
     assert "<prompt>" in caplog.text
@@ -401,6 +406,150 @@ def test_codex_local_adapter_uses_last_message_output_even_on_nonzero_exit(monke
 
     assert finding.verdict == "medium"
     assert finding.summary == "moderate risk in changed auth path"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "id_key"),
+    [
+        ("session_configured", "session_id"),
+        ("thread.started", "thread_id"),
+    ],
+)
+def test_codex_local_adapter_records_resume_ids_from_json_events(monkeypatch, event_type: str, id_key: str) -> None:
+    adapter = CodexLocalAdapter(command="codex")
+    resume_id = "019dbb70-d65b-7983-8d34-3350f2222631"
+
+    def _fake_run(args, **kwargs):
+        last_message_path = args[args.index("--output-last-message") + 1]
+        with open(last_message_path, "w", encoding="utf-8") as fh:
+            fh.write('{"verdict":"medium","score":0.55,"summary":"moderate risk in changed auth path","recommendations":["add coverage for auth edge cases"],"confidence":0.7}')
+
+        result = type("Result", (), {})()
+        result.returncode = 0
+        result.stdout = f'{{"type":"{event_type}","{id_key}":"{resume_id}"}}\n'
+        result.stderr = ""
+        result.args = args
+        return result
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    adapter.analyze_pr("code-risk", "code risk and complexity", _pr())
+
+    assert adapter.session_ids == [resume_id]
+
+
+def test_codex_local_adapter_extracts_payload_from_json_events_when_last_message_is_empty(monkeypatch) -> None:
+    adapter = CodexLocalAdapter(command="codex")
+
+    def _fake_run(args, **kwargs):
+        result = type("Result", (), {})()
+        result.returncode = 0
+        result.stdout = (
+            '{"type":"session_configured","session_id":"11111111-2222-3333-4444-555555555555"}\n'
+            '{"type":"assistant_message","text":"{\\"verdict\\":\\"medium\\",\\"score\\":0.55,\\"summary\\":\\"moderate risk in changed auth path\\",\\"recommendations\\":[\\"add coverage for auth edge cases\\"],\\"confidence\\":0.7}"}\n'
+        )
+        result.stderr = ""
+        result.args = args
+        return result
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    finding = adapter.analyze_pr("code-risk", "code risk and complexity", _pr())
+
+    assert finding.verdict == "medium"
+    assert finding.summary == "moderate risk in changed auth path"
+
+
+def test_codex_local_adapter_isolates_session_ids_per_concurrent_review(monkeypatch) -> None:
+    adapter = CodexLocalAdapter(command="codex")
+    reviewer = PRSubagentReviewer(adapter)
+    pr_a = _pr().model_copy(update={"number": 101, "title": "PR 101"})
+    pr_b = _pr().model_copy(update={"number": 102, "title": "PR 102"})
+    release_a = threading.Event()
+    reports: dict[int, object] = {}
+
+    def _fake_run(args, **kwargs):
+        prompt = args[-1]
+        pr_number = 101 if "number: 101" in prompt else 102
+        session_id = f"session-{pr_number}"
+        last_message_path = args[args.index("--output-last-message") + 1]
+        with open(last_message_path, "w", encoding="utf-8") as fh:
+            fh.write(
+                '{"findings":[{"agent_name":"code-risk","focus_area":"code risk and complexity","verdict":"medium","score":0.55,"summary":"moderate risk in changed auth path","recommendations":["add coverage for auth edge cases"],"confidence":0.7}]}'
+            )
+
+        if pr_number == 101:
+            release_a.wait(timeout=1)
+        else:
+            time.sleep(0.05)
+            release_a.set()
+
+        result = type("Result", (), {})()
+        result.returncode = 0
+        result.stdout = (
+            f'{{"type":"session_configured","session_id":"initial-{pr_number}"}}\n'
+            f'{{"type":"thread.started","thread_id":"{session_id}"}}\n'
+        )
+        result.stderr = ""
+        result.args = args
+        return result
+
+    def _run_review(pr: PullRequestSnapshot) -> None:
+        findings = reviewer.run(pr)
+        reports[pr.number] = reviewer.aggregate(pr, findings)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    thread_a = threading.Thread(target=_run_review, args=(pr_a,))
+    thread_b = threading.Thread(target=_run_review, args=(pr_b,))
+    thread_a.start()
+    time.sleep(0.02)
+    thread_b.start()
+    thread_a.join()
+    thread_b.join()
+
+    assert reports[101].session_ids == ["session-101"]
+    assert reports[102].session_ids == ["session-102"]
+
+
+def test_worktree_wrapper_records_stable_resume_context(tmp_path) -> None:
+    class _Adapter:
+        repo_dir = str(tmp_path / "base")
+        resume_context: dict[str, str] = {}
+
+        def set_review_resume_context(self, *, cwd: str = "", branch: str = "") -> None:
+            self.resume_context = {"cwd": cwd, "branch": branch}
+
+        def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[object]:
+            assert self.repo_dir == str(tmp_path / "worktrees" / "pr-77")
+            return []
+
+    class _RepoManager:
+        def fetch_pr_branch(self, pr_number: int) -> str:
+            return f"pr-{pr_number}"
+
+        def get_base_repo(self):
+            return tmp_path / "base"
+
+    class _WorktreeManager:
+        auto_cleanup = True
+        removed: list[int] = []
+
+        def create_worktree_for_pr(self, pr_number: int, branch: str):
+            return type("WorktreeContext", (), {"path": tmp_path / "worktrees" / f"pr-{pr_number}"})()
+
+        def remove_worktree(self, pr_number: int) -> None:
+            self.removed.append(pr_number)
+
+    adapter = _Adapter()
+    worktree_manager = _WorktreeManager()
+    wrapped = _wrap_method_with_worktree(adapter.analyze_pr_comprehensive, worktree_manager, _RepoManager())
+
+    wrapped(_pr())
+
+    assert adapter.repo_dir == str(tmp_path / "base")
+    assert adapter.resume_context == {"cwd": str(tmp_path / "base"), "branch": "pr-77"}
+    assert worktree_manager.removed == [77]
 
 
 def test_factory_builds_codex_local_adapter(tmp_path, monkeypatch) -> None:

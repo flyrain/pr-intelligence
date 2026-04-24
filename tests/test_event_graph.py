@@ -125,6 +125,110 @@ def test_pr_review_graph_creates_report_for_existing_pr() -> None:
     assert len(report.findings) == 4
 
 
+def test_pr_review_graph_records_llm_session_ids() -> None:
+    class _SessionTrackingLLM(HeuristicLLMAdapter):
+        def __init__(self):
+            super().__init__(provider="codex_local", model="gpt-5.4")
+            self._session_ids: list[str] = []
+
+        @property
+        def session_ids(self) -> list[str]:
+            return list(self._session_ids)
+
+        def reset_session_ids(self) -> None:
+            self._session_ids.clear()
+
+        @property
+        def resume_context(self) -> dict[str, str]:
+            return {"cwd": "/tmp/polaris", "branch": "pr-52"}
+
+        def analyze_pr_comprehensive(self, pr: PullRequestSnapshot):
+            self._session_ids.append("11111111-2222-3333-4444-555555555555")
+            return super().analyze_pr_comprehensive(pr)
+
+    repo = InMemoryRepository()
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=52,
+            title="Session tracking",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=2,
+            deletions=1,
+            html_url="https://example.com/pr/52",
+            updated_at=datetime.now(timezone.utc),
+            diff_text="diff --git a/a.py b/a.py",
+        )
+    )
+    reviewer = PRSubagentReviewer(_SessionTrackingLLM())
+    graph = PRReviewGraph(repo, reviewer)
+
+    graph.invoke(52)
+
+    report = repo.latest_pr_review_report(52)
+    assert report is not None
+    assert report.session_ids == ["11111111-2222-3333-4444-555555555555"]
+    assert report.resume_cwd == "/tmp/polaris"
+    assert report.resume_branch == "pr-52"
+
+
+def test_pr_review_graph_records_only_latest_llm_session_id() -> None:
+    class _SessionTrackingLLM(HeuristicLLMAdapter):
+        def __init__(self):
+            super().__init__(provider="codex_local", model="gpt-5.4")
+            self._session_ids: list[str] = []
+
+        @property
+        def session_ids(self) -> list[str]:
+            return list(self._session_ids)
+
+        def reset_session_ids(self) -> None:
+            self._session_ids.clear()
+
+        def analyze_pr_comprehensive(self, pr: PullRequestSnapshot):
+            self._session_ids.extend(["initial-session", "critique-session", "final-session"])
+            return super().analyze_pr_comprehensive(pr)
+
+    repo = InMemoryRepository()
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=53,
+            title="Latest session tracking",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=2,
+            deletions=1,
+            html_url="https://example.com/pr/53",
+            updated_at=datetime.now(timezone.utc),
+            diff_text="diff --git a/a.py b/a.py",
+        )
+    )
+    reviewer = PRSubagentReviewer(_SessionTrackingLLM())
+    graph = PRReviewGraph(repo, reviewer)
+
+    graph.invoke(53)
+
+    report = repo.latest_pr_review_report(53)
+    assert report is not None
+    assert report.session_ids == ["final-session"]
+
+
 def test_pr_review_graph_persists_blocked_report_when_diff_unavailable() -> None:
     class _FailingGitHubClient:
         def get_pull_request_diff(self, number: int) -> str:

@@ -181,6 +181,9 @@ class PRReviewReport(BaseModel):
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     provider: str
     model: str
+    session_ids: list[str] = Field(default_factory=list)
+    resume_cwd: str = ""
+    resume_branch: str = ""
     findings: list[PRSubagentFinding] = Field(default_factory=list)
     overall_priority: float
     overall_recommendation: str

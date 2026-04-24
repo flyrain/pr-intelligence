@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from polaris_pr_intel.llm._base_local_cli import BaseLocalCLIAdapter
@@ -29,6 +31,16 @@ class CodexLocalAdapter(BaseLocalCLIAdapter):
     reasoning_effort: str = "medium"
     repo_dir: str = ""
     fail_review_job_on_generation_error: bool = True
+    _session_ids_local: threading.local = field(
+        default_factory=threading.local,
+        init=False,
+        repr=False,
+    )
+    _resume_context_local: threading.local = field(
+        default_factory=threading.local,
+        init=False,
+        repr=False,
+    )
 
     def _wrap_skill_prompt(self, skill_body: str) -> str:
         return (
@@ -78,6 +90,99 @@ class CodexLocalAdapter(BaseLocalCLIAdapter):
 
     def _format_followup_failure(self, exc: Exception) -> str:
         return self._format_failure_detail(exc)
+
+    @property
+    def session_ids(self) -> list[str]:
+        return list(getattr(self._session_ids_local, "session_ids", []))
+
+    def reset_session_ids(self) -> None:
+        self._session_ids_local.session_ids = []
+
+    @property
+    def resume_context(self) -> dict[str, str]:
+        context = getattr(self._resume_context_local, "context", None)
+        if isinstance(context, dict):
+            return {
+                key: value
+                for key, value in context.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+        cwd = self.repo_dir.strip()
+        return {"cwd": cwd} if cwd else {}
+
+    def reset_resume_context(self) -> None:
+        self._resume_context_local.context = {}
+
+    def set_review_resume_context(self, *, cwd: str = "", branch: str = "") -> None:
+        context: dict[str, str] = {}
+        if cwd:
+            context["cwd"] = cwd
+        if branch:
+            context["branch"] = branch
+        self._resume_context_local.context = context
+
+    @staticmethod
+    def _find_session_ids(value: object) -> list[str]:
+        if isinstance(value, dict):
+            found: list[str] = []
+            for key, nested in value.items():
+                if key in {"session_id", "thread_id"} and isinstance(nested, str) and nested:
+                    found.append(nested)
+                else:
+                    found.extend(CodexLocalAdapter._find_session_ids(nested))
+            return found
+        if isinstance(value, list):
+            found = []
+            for item in value:
+                found.extend(CodexLocalAdapter._find_session_ids(item))
+            return found
+        return []
+
+    def _record_session_ids_from_json_events(self, text: str) -> None:
+        current = self.session_ids
+        for event in self._parse_json_events(text) or []:
+            for session_id in self._find_session_ids(event):
+                if session_id not in current:
+                    current.append(session_id)
+        self._session_ids_local.session_ids = current
+
+    @staticmethod
+    def _parse_json_events(text: str) -> list[object] | None:
+        events: list[object] = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                return None
+        return events or None
+
+    @classmethod
+    def _extract_payload_from_json_events(cls, text: str) -> object | None:
+        events = cls._parse_json_events(text)
+        if not events:
+            return None
+        for event in reversed(events):
+            if not isinstance(event, dict):
+                continue
+            if "findings" in event or "decisions" in event or {"verdict", "score", "summary"}.issubset(event):
+                return event
+            candidates = []
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                candidates.append(item.get("text"))
+            if event.get("type") in {"agent_message", "assistant_message"}:
+                candidates.append(event.get("text"))
+            for candidate in candidates:
+                if not isinstance(candidate, str):
+                    continue
+                try:
+                    return ClaudeCodeLocalAdapter._extract_json_payload(candidate)
+                except ValueError:
+                    continue
+        return None
 
     def _build_prompt(self, agent_name: str, focus_area: str, pr: PullRequestSnapshot) -> str:
         return self._build_pr_prompt_document(
@@ -213,6 +318,7 @@ Routing guidance:
                 "exec",
                 "--full-auto",
                 "--skip-git-repo-check",
+                "--json",
                 "-c",
                 f'model_reasoning_effort="{self.reasoning_effort}"',
                 "--output-last-message",
@@ -240,10 +346,20 @@ Routing guidance:
             stdout = getattr(proc, "stdout", "")
             stderr = getattr(proc, "stderr", "")
             returncode = getattr(proc, "returncode", 0)
-            source = raw_output or stdout
-            if source:
+            self._record_session_ids_from_json_events(stdout)
+            if raw_output:
                 try:
-                    return ClaudeCodeLocalAdapter._extract_json_payload(source)
+                    return ClaudeCodeLocalAdapter._extract_json_payload(raw_output)
+                except ValueError:
+                    if returncode == 0:
+                        raise
+            parsed_events = self._parse_json_events(stdout)
+            event_payload = self._extract_payload_from_json_events(stdout) if parsed_events else None
+            if event_payload is not None:
+                return event_payload
+            if stdout and not parsed_events:
+                try:
+                    return ClaudeCodeLocalAdapter._extract_json_payload(stdout)
                 except ValueError:
                     if returncode == 0:
                         raise

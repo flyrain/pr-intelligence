@@ -137,9 +137,14 @@ curl \"http://127.0.0.1:8080/reviews/pr/123/latest\"
       \"line\": 42
     }
   ],
-  \"summary\": \"Overall assessment...\"
+  \"summary\": \"Overall assessment...\",
+  \"session_ids\": [\"11111111-2222-3333-4444-555555555555\"],
+  \"resume_cwd\": \"/path/to/repo\",
+  \"resume_branch\": \"pr-4282\"
 }
 ```
+
+When the review provider is `codex_local`, `session_ids` contains the final Codex session to resume after multi-step review. Reports also include the repository path and PR branch needed to recreate the review context before opening an interactive resume session.
 
 ### GET /reviews/pr/{pr_number}/latest.md
 

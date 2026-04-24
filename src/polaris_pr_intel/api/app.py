@@ -17,17 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from polaris_pr_intel.agents.derived_analysis import DerivedAnalysisAgent
 from polaris_pr_intel.agents.issue_insight import IssueInsightAgent
 from polaris_pr_intel.agents.review_need import ReviewNeedAgent
-from polaris_pr_intel.config import Settings
-from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
-from polaris_pr_intel.graphs.event_graph import EventGraph
-from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
-from polaris_pr_intel.ingest import SnapshotIngestor
-from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, QueueItem
-from polaris_pr_intel.refresh import run_full_refresh
-from polaris_pr_intel.scheduler.periodic import next_periodic_refresh_at
-from polaris_pr_intel.store.base import Repository
-from polaris_pr_intel.time_utils import activity_timezone_label, format_activity_time, is_same_activity_day
 from polaris_pr_intel.api.ui import (
+    build_resume_command,
     render_dashboard_page,
     render_deep_review_entry,
     render_deep_review_finding,
@@ -40,6 +31,16 @@ from polaris_pr_intel.api.ui import (
     render_review_job_row,
     render_review_row,
 )
+from polaris_pr_intel.config import Settings
+from polaris_pr_intel.graphs.daily_report_graph import DailyReportGraph
+from polaris_pr_intel.graphs.event_graph import EventGraph
+from polaris_pr_intel.graphs.pr_review_graph import PRReviewGraph
+from polaris_pr_intel.ingest import SnapshotIngestor
+from polaris_pr_intel.models import AnalysisItem, AnalysisRun, GitHubEvent, QueueItem
+from polaris_pr_intel.refresh import run_full_refresh
+from polaris_pr_intel.scheduler.periodic import next_periodic_refresh_at
+from polaris_pr_intel.store.base import Repository
+from polaris_pr_intel.time_utils import activity_timezone_label, format_activity_time, is_same_activity_day
 
 if TYPE_CHECKING:
     from polaris_pr_intel.scheduler.periodic import PeriodicRefreshScheduler
@@ -73,10 +74,16 @@ def create_app(
     review_job_workers = max(1, int(os.getenv("REVIEW_JOB_WORKERS", "1")))
     review_job_timeout_sec = int(os.getenv("REVIEW_JOB_TIMEOUT_SEC", "1200"))
     app_settings = settings or Settings(github_token="")
-    configured_llm_display = (
-        f"{llm_provider} / {llm_model}" if llm_model else llm_provider
-    ) if llm_provider else app_settings.llm_provider
+    if llm_provider:
+        configured_llm_display = f"{llm_provider} / {llm_model}" if llm_model else llm_provider
+    else:
+        configured_llm_display = (
+            f"{app_settings.llm_provider} / {app_settings.llm_model}"
+            if app_settings.llm_model
+            else app_settings.llm_provider
+        )
     review_target_login = app_settings.review_target_login.strip().lower()
+    resume_cwd = app_settings.git_repo_path.strip()
     review_need_agent = getattr(event_graph, "review_need", ReviewNeedAgent(app_settings))
     issue_insight_agent = getattr(event_graph, "issue_insight", IssueInsightAgent(app_settings))
 
@@ -391,6 +398,9 @@ def create_app(
                     provider=report.provider,
                     model=report.model,
                     recommendation=report.overall_recommendation,
+                    session_ids=report.session_ids,
+                    resume_cwd=report.resume_cwd or resume_cwd,
+                    resume_branch=report.resume_branch,
                     findings_html="".join(findings_html),
                 )
             )
@@ -599,6 +609,23 @@ def create_app(
             "---",
             "",
         ]
+
+        if report.session_ids:
+            session_id = report.session_ids[-1]
+            resume_cmd = build_resume_command(
+                session_id=session_id,
+                cwd=report.resume_cwd or resume_cwd,
+                pr_number=report.pr_number,
+                branch=report.resume_branch,
+            )
+            lines.extend([
+                "## Resume Session",
+                "",
+                f"- `{session_id}`: `{resume_cmd}`",
+                "",
+                "---",
+                "",
+            ])
 
         if report.blocked_reason:
             lines.extend([

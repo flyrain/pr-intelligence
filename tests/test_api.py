@@ -879,6 +879,59 @@ def test_ui_deep_reviews_ordered_by_review_time_desc() -> None:
     assert resp.text.index("priority=0.10") < resp.text.index("priority=0.99")
 
 
+def test_ui_deep_review_shows_resume_command_for_codex_sessions() -> None:
+    client, repo, _, _ = _client(Settings(github_token="", git_repo_path="/Users/yufei/asf/polaris"))
+    now = datetime.now(timezone.utc)
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=202,
+            title="Codex-backed review",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=3,
+            deletions=1,
+            html_url="https://example.com/pr/202",
+            updated_at=now,
+        )
+    )
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=202,
+            generated_at=datetime(2026, 3, 11, 11, 0, tzinfo=timezone.utc),
+            provider="codex_local",
+            model="gpt-5.4",
+            session_ids=[
+                "11111111-2222-3333-4444-555555555555",
+                "66666666-7777-8888-9999-000000000000",
+            ],
+            resume_cwd="/Users/yufei/asf/polaris",
+            resume_branch="pr-202",
+            overall_priority=0.4,
+            overall_recommendation="resumeable",
+        )
+    )
+
+    resp = client.get("/ui")
+
+    assert resp.status_code == 200
+    assert "Resume latest:" in resp.text
+    assert "66666666-7777-8888-9999-000000000000" in resp.text
+    assert "11111111-2222-3333-4444-555555555555" not in resp.text
+    assert (
+        "cd /Users/yufei/asf/polaris &amp;&amp; git fetch origin pull/202/head "
+        "&amp;&amp; git switch -C pr-202 FETCH_HEAD &amp;&amp; codex resume --include-non-interactive "
+        "-C /Users/yufei/asf/polaris 66666666-7777-8888-9999-000000000000"
+    ) in resp.text
+
+
 def test_ui_needs_review_folds_after_first_ten() -> None:
     client, repo, _, _ = _client()
     now = datetime.now(timezone.utc)
@@ -1351,6 +1404,55 @@ def test_latest_pr_review_markdown_shows_blocked_reason() -> None:
     assert "Unable to load the PR patch from GitHub or local state." in resp.text
     assert "## Findings" not in resp.text
     assert "No findings." not in resp.text
+
+
+def test_latest_pr_review_markdown_shows_resume_session_commands() -> None:
+    client, repo, _, _ = _client(Settings(github_token="", git_repo_path="/Users/yufei/asf/polaris"))
+    now = datetime.now(timezone.utc)
+    session_id = "11111111-2222-3333-4444-555555555555"
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=334,
+            title="Codex session review",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=2,
+            additions=10,
+            deletions=4,
+            html_url="https://example.com/pr/334",
+            updated_at=now,
+        )
+    )
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=334,
+            provider="codex_local",
+            model="gpt-5.4",
+            session_ids=[session_id],
+            resume_cwd="/Users/yufei/asf/polaris",
+            resume_branch="pr-334",
+            findings=[],
+            overall_priority=0.2,
+            overall_recommendation="Standard review path is sufficient.",
+        )
+    )
+
+    resp = client.get("/reviews/pr/334/latest.md")
+
+    assert resp.status_code == 200
+    assert "## Resume Session" in resp.text
+    assert (
+        f"`cd /Users/yufei/asf/polaris && git fetch origin pull/334/head && "
+        f"git switch -C pr-334 FETCH_HEAD && codex resume --include-non-interactive "
+        f"-C /Users/yufei/asf/polaris {session_id}`"
+    ) in resp.text
 
 
 def test_refresh_endpoint() -> None:

@@ -1,8 +1,39 @@
 from __future__ import annotations
 
 import json
+import shlex
 from html import escape
 from typing import Any, Mapping
+
+
+def _shell_join(parts: list[str]) -> str:
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def build_resume_command(
+    *,
+    session_id: str,
+    cwd: str = "",
+    pr_number: int | None = None,
+    branch: str = "",
+) -> str:
+    if cwd and pr_number and branch:
+        return " && ".join(
+            [
+                _shell_join(["cd", cwd]),
+                _shell_join(["git", "fetch", "origin", f"pull/{pr_number}/head"]),
+                _shell_join(["git", "switch", "-C", branch, "FETCH_HEAD"]),
+                _shell_join(
+                    ["codex", "resume", "--include-non-interactive", "-C", cwd, session_id]
+                ),
+            ]
+        )
+
+    parts = ["codex", "resume", "--include-non-interactive"]
+    if cwd:
+        parts.extend(["-C", cwd])
+    parts.append(session_id)
+    return _shell_join(parts)
 
 
 def render_new_updated_row(*, pr_number: int, html_url: str, title: str, updated_at_label: str) -> str:
@@ -112,8 +143,22 @@ def render_deep_review_entry(
     provider: str,
     model: str,
     recommendation: str,
+    session_ids: list[str],
     findings_html: str,
+    resume_cwd: str = "",
+    resume_branch: str = "",
 ) -> str:
+    resume_html = ""
+    if session_ids:
+        resume_cmd = build_resume_command(
+            session_id=session_ids[-1],
+            cwd=resume_cwd,
+            pr_number=pr_number,
+            branch=resume_branch,
+        )
+        resume_html = (
+            f"<p class=\"muted\">Resume latest: <code>{escape(resume_cmd)}</code></p>"
+        )
     return (
         "<details class=\"review-detail\">"
         "<summary>"
@@ -121,6 +166,7 @@ def render_deep_review_entry(
         f"<span>priority={overall_priority:.2f} · <a href=\"/reviews/pr/{pr_number}/latest.html\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"view-report-link\">View Report</a></span>"
         "</summary>"
         f"<p class=\"muted\">Provider: {escape(provider)} | Model: {escape(model)} | Recommendation: {escape(recommendation)}</p>"
+        f"{resume_html}"
         f"{findings_html if findings_html else '<p>No findings.</p>'}"
         "</details>"
     )
@@ -656,7 +702,7 @@ def render_dashboard_page(
             <img class="brand-logo" src="/docs-static/orca.png" alt="Orca logo" />
             <div class="brand-copy">
 	          <h1>PR Intelligence</h1>
-	          <p class="muted">{escape(configured_llm_display)}</p>
+	          <p class="muted">LLM Provider: {escape(configured_llm_display)}</p>
             </div>
           </div>
           <article class="status-item status-last">

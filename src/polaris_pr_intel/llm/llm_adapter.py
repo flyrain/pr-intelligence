@@ -52,6 +52,9 @@ def _wrap_method_with_worktree(method, worktree_manager: WorktreeManager, repo_m
             logger.info("Using worktree at %s for PR #%d", worktree_ctx.path, pr.number)
             # Swap repo_dir temporarily
             original_repo_dir = method.__self__.repo_dir
+            set_resume_context = getattr(method.__self__, "set_review_resume_context", None)
+            if callable(set_resume_context):
+                set_resume_context(cwd=str(repo_manager.get_base_repo()), branch=branch)
             method.__self__.repo_dir = str(worktree_ctx.path)
             return method(pr)
         finally:

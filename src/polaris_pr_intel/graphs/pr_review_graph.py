@@ -68,7 +68,11 @@ class PRReviewGraph:
         if pr is None:
             return {}
         findings = self.reviewer.run(pr)
-        return {"pr_review_findings": findings}
+        return {
+            "pr_review_findings": findings,
+            "pr_review_session_ids": self.reviewer.current_session_ids(),
+            "pr_review_resume_context": self.reviewer.current_resume_context(),
+        }
 
     def aggregate_review(self, state: PRIntelState) -> dict[str, Any]:
         existing_report = state.get("pr_review_report")
@@ -76,9 +80,16 @@ class PRReviewGraph:
             return {"pr_review_report": existing_report}
         pr = state.get("pr")
         findings = state.get("pr_review_findings", [])
+        session_ids = state.get("pr_review_session_ids", [])
+        resume_context = state.get("pr_review_resume_context", {})
         if pr is None:
             return {}
-        report = self.reviewer.aggregate(pr, findings)
+        report = self.reviewer.aggregate(
+            pr,
+            findings,
+            session_ids=session_ids,
+            resume_context=resume_context,
+        )
         return {"pr_review_report": report}
 
     def persist_review(self, state: PRIntelState) -> dict[str, Any]:

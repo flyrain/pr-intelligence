@@ -22,6 +22,8 @@ class PRIntelState(TypedDict, total=False):
     issue: IssueSnapshot
     pr_summary: PRSummary
     pr_review_findings: list[PRSubagentFinding]
+    pr_review_session_ids: list[str]
+    pr_review_resume_context: dict[str, str]
     pr_review_report: PRReviewReport
     review_signal: ReviewSignal
     issue_signal: IssueSignal
