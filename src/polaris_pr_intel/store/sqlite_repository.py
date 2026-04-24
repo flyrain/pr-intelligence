@@ -106,41 +106,34 @@ class SQLiteRepository:
     def _set_metadata_datetime(self, key: str, value: datetime | None) -> None:
         self._set_metadata_value(key, value.isoformat() if value else None)
 
+    def _fetch_keyed_dict(self, table: str, key_col: str, model: type) -> dict:
+        with self._lock:
+            rows = self._conn.execute(f"SELECT {key_col}, payload FROM {table}").fetchall()
+        return {int(row[key_col]): model.model_validate_json(row["payload"]) for row in rows}
+
     @property
     def prs(self) -> dict[int, PullRequestSnapshot]:
-        with self._lock:
-            rows = self._conn.execute("SELECT number, payload FROM prs").fetchall()
-        return {int(row["number"]): PullRequestSnapshot.model_validate_json(row["payload"]) for row in rows}
+        return self._fetch_keyed_dict("prs", "number", PullRequestSnapshot)
 
     @property
     def issues(self) -> dict[int, IssueSnapshot]:
-        with self._lock:
-            rows = self._conn.execute("SELECT number, payload FROM issues").fetchall()
-        return {int(row["number"]): IssueSnapshot.model_validate_json(row["payload"]) for row in rows}
+        return self._fetch_keyed_dict("issues", "number", IssueSnapshot)
 
     @property
     def pr_summaries(self) -> dict[int, PRSummary]:
-        with self._lock:
-            rows = self._conn.execute("SELECT pr_number, payload FROM pr_summaries").fetchall()
-        return {int(row["pr_number"]): PRSummary.model_validate_json(row["payload"]) for row in rows}
+        return self._fetch_keyed_dict("pr_summaries", "pr_number", PRSummary)
 
     @property
     def review_signals(self) -> dict[int, ReviewSignal]:
-        with self._lock:
-            rows = self._conn.execute("SELECT pr_number, payload FROM review_signals").fetchall()
-        return {int(row["pr_number"]): ReviewSignal.model_validate_json(row["payload"]) for row in rows}
+        return self._fetch_keyed_dict("review_signals", "pr_number", ReviewSignal)
 
     @property
     def issue_signals(self) -> dict[int, IssueSignal]:
-        with self._lock:
-            rows = self._conn.execute("SELECT issue_number, payload FROM issue_signals").fetchall()
-        return {int(row["issue_number"]): IssueSignal.model_validate_json(row["payload"]) for row in rows}
+        return self._fetch_keyed_dict("issue_signals", "issue_number", IssueSignal)
 
     @property
     def pr_review_reports(self) -> dict[int, PRReviewReport]:
-        with self._lock:
-            rows = self._conn.execute("SELECT pr_number, payload FROM pr_review_reports").fetchall()
-        return {int(row["pr_number"]): PRReviewReport.model_validate_json(row["payload"]) for row in rows}
+        return self._fetch_keyed_dict("pr_review_reports", "pr_number", PRReviewReport)
 
     @property
     def analysis_runs(self) -> list[AnalysisRun]:

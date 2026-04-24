@@ -24,31 +24,37 @@ class DerivedAnalysisAgent:
         self.repo = repo
         self.llm = llm
         self.settings = settings
+        self._prs_cache: dict[int, PullRequestSnapshot] = {}
 
     def run(self) -> AnalysisRun:
-        contexts = self._build_attention_contexts()
-        decisions = self._build_attention_decisions(contexts)
-        items = self._build_items(contexts, decisions)
-        catalog_counts = self._catalog_counts(items)
-        artifacts = self._build_artifacts(items, catalog_counts)
-        run = AnalysisRun(
-            source_sync_at=self.repo.last_sync_at,
-            analysis_version="v2",
-            catalog_counts=catalog_counts,
-            artifacts=artifacts,
-            items=items,
-            attention_contexts=contexts,
-            attention_decisions=decisions,
-        )
-        return run
+        self._prs_cache = self.repo.prs
+        try:
+            contexts = self._build_attention_contexts()
+            decisions = self._build_attention_decisions(contexts)
+            items = self._build_items(contexts, decisions)
+            catalog_counts = self._catalog_counts(items)
+            artifacts = self._build_artifacts(items, catalog_counts)
+            run = AnalysisRun(
+                source_sync_at=self.repo.last_sync_at,
+                analysis_version="v2",
+                catalog_counts=catalog_counts,
+                artifacts=artifacts,
+                items=items,
+                attention_contexts=contexts,
+                attention_decisions=decisions,
+            )
+            return run
+        finally:
+            self._prs_cache = {}
 
     def _build_attention_contexts(self) -> list[PRAttentionContext]:
         now_dt = datetime.now(timezone.utc)
         contexts: list[PRAttentionContext] = []
-        for pr in sorted(self.repo.prs.values(), key=lambda item: item.updated_at, reverse=True):
+        review_signals = self.repo.review_signals
+        for pr in sorted(self._prs_cache.values(), key=lambda item: item.updated_at, reverse=True):
             if pr.state != "open":
                 continue
-            signal = self.repo.review_signals.get(pr.number)
+            signal = review_signals.get(pr.number)
             age_hours = (now_dt - pr.updated_at).total_seconds() / 3600
             contexts.append(
                 PRAttentionContext(
@@ -97,9 +103,11 @@ class DerivedAnalysisAgent:
         items: list[AnalysisItem] = []
         contexts_by_number = {ctx.pr_number: ctx for ctx in contexts}
         activity_now = datetime.now(timezone.utc)
+        issues = self.repo.issues
+        issue_signals = self.repo.issue_signals
         for decision in decisions:
             ctx = contexts_by_number[decision.pr_number]
-            pr = self.repo.prs.get(decision.pr_number)
+            pr = self._prs_cache.get(decision.pr_number)
             if pr is None:
                 continue
             catalogs = self._decision_catalogs(
@@ -126,8 +134,8 @@ class DerivedAnalysisAgent:
                 )
             )
 
-        for signal in sorted(self.repo.issue_signals.values(), key=lambda s: s.score, reverse=True):
-            issue = self.repo.issues.get(signal.issue_number)
+        for signal in sorted(issue_signals.values(), key=lambda s: s.score, reverse=True):
+            issue = issues.get(signal.issue_number)
             if not issue or issue.state != "open":
                 continue
             catalogs = self._base_issue_catalogs(issue.labels, signal.score, signal.reasons)
@@ -273,7 +281,7 @@ class DerivedAnalysisAgent:
         return "\n".join(parts)
 
     def _compact_reason(self, item: AnalysisItem) -> str:
-        pr = self.repo.prs.get(item.number) if item.item_type == "pr" else None
+        pr = self._prs_cache.get(item.number) if item.item_type == "pr" else None
         if pr is not None and pr.draft:
             return "draft PR, lower priority"
         if item.llm_summary:
@@ -327,7 +335,7 @@ class DerivedAnalysisAgent:
     def _has_prior_review_signal(self, item: AnalysisItem) -> bool:
         if item.item_type != "pr":
             return False
-        pr = self.repo.prs.get(item.number)
+        pr = self._prs_cache.get(item.number)
         if pr is None:
             return False
         return pr.review_comments > 0 or self.repo.latest_pr_review_report(item.number) is not None
@@ -335,13 +343,13 @@ class DerivedAnalysisAgent:
     def _is_draft(self, item: AnalysisItem) -> bool:
         if item.item_type != "pr":
             return False
-        pr = self.repo.prs.get(item.number)
+        pr = self._prs_cache.get(item.number)
         return bool(pr and pr.draft)
 
     def _activity_trend_note(self, item: AnalysisItem) -> str:
         if item.item_type != "pr":
             return ""
-        pr = self.repo.prs.get(item.number)
+        pr = self._prs_cache.get(item.number)
         if pr is None or pr.activity_comments_24h <= 0:
             return ""
         label = "comment" if pr.activity_comments_24h == 1 else "comments"

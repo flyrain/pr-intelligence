@@ -60,9 +60,6 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="Polaris PR Intelligence")
 
-    # Mount static files for serving images and assets
-    import os
-    # Go up from api/app.py -> api -> polaris_pr_intel -> src -> project_root
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     docs_path = os.path.join(project_root, "docs")
     if os.path.exists(docs_path):
@@ -129,10 +126,11 @@ def create_app(
         if analysis_run is not None:
             if analysis_run.attention_decisions:
                 items = []
+                prs = repo.prs
                 for decision in analysis_run.attention_decisions:
                     if not decision.needs_review:
                         continue
-                    pr = repo.prs.get(decision.pr_number)
+                    pr = prs.get(decision.pr_number)
                     if not pr or pr.state != "open":
                         continue
                     reasons = [decision.priority_reason, *decision.tags]
@@ -350,8 +348,9 @@ def create_app(
         folded_review_rows = review_rows[10:]
         folded_review_html = render_folded_review_html(folded_review_rows)
         issue_rows = []
+        issues_snapshot = repo.issues
         for signal in sorted(repo.issue_signals.values(), key=lambda s: s.score, reverse=True):
-            issue = repo.issues.get(signal.issue_number)
+            issue = issues_snapshot.get(signal.issue_number)
             if not issue or not signal.interesting:
                 continue
             issue_rows.append(
@@ -372,8 +371,9 @@ def create_app(
             key=lambda r: r.generated_at if r.generated_at.tzinfo else r.generated_at.replace(tzinfo=timezone.utc),
             reverse=True,
         )
+        prs_snapshot = repo.prs
         for report in deep_reports[:20]:
-            pr = repo.prs.get(report.pr_number)
+            pr = prs_snapshot.get(report.pr_number)
             if not pr:
                 continue
             findings_html = []

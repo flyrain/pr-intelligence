@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from polaris_pr_intel.github._snapshots import to_issue_snapshot, to_pr_snapshot
 from polaris_pr_intel.models import IssueSnapshot, PullRequestSnapshot
 
 
@@ -57,7 +58,7 @@ class AsyncGitHubClient:
 
         pr_data, activity = await asyncio.gather(pr_task, activity_task)
 
-        pr = self._to_pr_snapshot(pr_data)
+        pr = to_pr_snapshot(pr_data)
         pr.activity_comments_24h = activity["comments_24h"]
         pr.activity_comments_7d = activity["comments_7d"]
         pr.activity_reviews_24h = activity["reviews_24h"]
@@ -158,7 +159,7 @@ class AsyncGitHubClient:
             params=params,
         )
         issues = [i for i in data if "pull_request" not in i]
-        return [self._to_issue_snapshot(issue) for issue in issues]
+        return [to_issue_snapshot(issue) for issue in issues]
 
     async def _count_recent_items(
         self,
@@ -189,42 +190,6 @@ class AsyncGitHubClient:
                 break
             page += 1
         return tuple(counts)
-
-    @staticmethod
-    def _to_pr_snapshot(pr: dict[str, Any]) -> PullRequestSnapshot:
-        return PullRequestSnapshot(
-            number=pr["number"],
-            title=pr.get("title", ""),
-            body=pr.get("body") or "",
-            state=pr.get("state", "open"),
-            draft=bool(pr.get("draft", False)),
-            author=(pr.get("user") or {}).get("login", "unknown"),
-            labels=[l["name"] for l in pr.get("labels", [])],
-            requested_reviewers=[u["login"] for u in pr.get("requested_reviewers", [])],
-            comments=pr.get("comments", 0),
-            review_comments=pr.get("review_comments", 0),
-            commits=pr.get("commits", 0),
-            changed_files=pr.get("changed_files", 0),
-            additions=pr.get("additions", 0),
-            deletions=pr.get("deletions", 0),
-            html_url=pr.get("html_url", ""),
-            updated_at=datetime.fromisoformat(pr["updated_at"].replace("Z", "+00:00")),
-        )
-
-    @staticmethod
-    def _to_issue_snapshot(issue: dict[str, Any]) -> IssueSnapshot:
-        return IssueSnapshot(
-            number=issue["number"],
-            title=issue.get("title", ""),
-            body=issue.get("body") or "",
-            state=issue.get("state", "open"),
-            author=(issue.get("user") or {}).get("login", "unknown"),
-            labels=[l["name"] for l in issue.get("labels", [])],
-            comments=issue.get("comments", 0),
-            assignees=[a["login"] for a in issue.get("assignees", [])],
-            html_url=issue.get("html_url", ""),
-            updated_at=datetime.fromisoformat(issue["updated_at"].replace("Z", "+00:00")),
-        )
 
 
 class GitHubClientWrapper:
