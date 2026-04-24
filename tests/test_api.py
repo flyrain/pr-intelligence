@@ -922,11 +922,13 @@ def test_ui_deep_review_shows_resume_command_for_codex_sessions() -> None:
     resp = client.get("/ui")
 
     assert resp.status_code == 200
-    assert "Resume latest:" in resp.text
+    assert 'class="action-btn resume-btn"' in resp.text
+    assert "Resume Session" in resp.text
+    assert "copyResumeCommand(this)" in resp.text
     assert "66666666-7777-8888-9999-000000000000" in resp.text
     assert "11111111-2222-3333-4444-555555555555" not in resp.text
     assert (
-        "cd /Users/yufei/asf/polaris &amp;&amp; git fetch origin pull/202/head "
+        'data-resume-command="cd /Users/yufei/asf/polaris &amp;&amp; git fetch origin pull/202/head '
         "&amp;&amp; git switch -C pr-202 FETCH_HEAD &amp;&amp; codex resume --include-non-interactive "
         "-C /Users/yufei/asf/polaris 66666666-7777-8888-9999-000000000000"
     ) in resp.text
