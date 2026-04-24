@@ -157,7 +157,11 @@ def render_deep_review_entry(
             branch=resume_branch,
         )
         resume_html = (
-            f"<p class=\"muted\">Resume latest: <code>{escape(resume_cmd)}</code></p>"
+            "<div class=\"resume-session\">"
+            f"<button class=\"action-btn resume-btn\" type=\"button\" data-resume-command=\"{escape(resume_cmd, quote=True)}\" "
+            "onclick=\"copyResumeCommand(this)\">Resume Session</button>"
+            f"<code>{escape(resume_cmd)}</code>"
+            "</div>"
         )
     return (
         "<details class=\"review-detail\">"
@@ -396,6 +400,19 @@ def render_dashboard_page(
     .view-report-link:hover {{
       background: var(--accent);
       color: white;
+    }}
+    .resume-session {{
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      margin: 10px 0;
+    }}
+    .resume-session code {{
+      min-width: 0;
+      overflow-x: auto;
+      color: var(--muted);
+      white-space: nowrap;
     }}
     .finding {{
       margin-top: 10px;
@@ -665,6 +682,23 @@ def render_dashboard_page(
           btn.disabled = false;
           if (btn.textContent !== "Failed") btn.textContent = original;
         }}, 2000);
+      }}
+    }}
+
+    async function copyResumeCommand(btn) {{
+      const original = btn.textContent;
+      btn.disabled = true;
+      try {{
+        await navigator.clipboard.writeText(btn.dataset.resumeCommand || "");
+        btn.textContent = "Copied";
+      }} catch (e) {{
+        btn.textContent = "Copy Failed";
+        console.error(e);
+      }} finally {{
+        setTimeout(() => {{
+          btn.disabled = false;
+          btn.textContent = original;
+        }}, 1800);
       }}
     }}
 
