@@ -102,7 +102,7 @@ PR Intelligence automatically manages repository access:
 - **`REFRESH_TIMEZONE`** (optional) - IANA timezone for the automatic refresh window
   - Example: `America/Los_Angeles`
   - Default: system local timezone
-- **`REFRESH_INTERVAL_MINUTES`** (default: `30`) - Minutes between automatic refreshes during the refresh window
+- **`REFRESH_INTERVAL_MINUTES`** (default: `60`) - Minutes between automatic refreshes during the refresh window
 - **`REFRESH_START_HOUR_LOCAL`** (default: `8`) - First local hour included in the automatic refresh window
 - **`REFRESH_END_HOUR_LOCAL`** (default: `23`) - Last local top-of-hour refresh in the automatic refresh window
 

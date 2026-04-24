@@ -88,7 +88,7 @@ def test_self_review_defaults_enabled(monkeypatch) -> None:
     assert settings.enable_self_review is True
 
 
-def test_periodic_refresh_defaults_match_daytime_half_hour_schedule(monkeypatch) -> None:
+def test_periodic_refresh_defaults_match_daytime_hourly_schedule(monkeypatch) -> None:
     monkeypatch.setenv("PR_INTEL_GITHUB_TOKEN", "token")
     monkeypatch.delenv("REFRESH_INTERVAL_MINUTES", raising=False)
     monkeypatch.delenv("REFRESH_START_HOUR_LOCAL", raising=False)
@@ -96,7 +96,7 @@ def test_periodic_refresh_defaults_match_daytime_half_hour_schedule(monkeypatch)
 
     settings = load_settings()
 
-    assert settings.refresh_interval_minutes == 30
+    assert settings.refresh_interval_minutes == 60
     assert settings.refresh_start_hour_local == 8
     assert settings.refresh_end_hour_local == 23
 

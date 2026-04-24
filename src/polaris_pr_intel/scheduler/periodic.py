@@ -84,7 +84,7 @@ class PeriodicRefreshScheduler:
         issue_insight_agent: IssueInsightAgent | None = None,
         enable_periodic_refresh: bool = False,
         refresh_timezone: str = "",
-        refresh_interval_minutes: int = 30,
+        refresh_interval_minutes: int = 60,
         refresh_start_hour_local: int = 8,
         refresh_end_hour_local: int = 23,
     ) -> None:
@@ -148,7 +148,7 @@ class PeriodicRefreshScheduler:
         if self.scheduler.running:
             return
 
-        # Periodic refresh every 30 minutes during the local daytime window.
+        # Periodic refresh every hour during the local daytime window.
         if self.enable_periodic_refresh and all([self.snapshot_ingestor, self.repo, self.review_need_agent, self.issue_insight_agent]):
             for job_id, trigger in build_periodic_refresh_triggers(
                 self.refresh_timezone,
