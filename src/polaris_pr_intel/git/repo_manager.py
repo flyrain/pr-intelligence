@@ -197,6 +197,34 @@ class RepositoryManager:
 
         logger.info("Fetching PR #%d branch to %s", pr_number, local_branch)
 
+        # If the base repo is checked out at pr-{N}, fetching into that ref fails with
+        # "refusing to fetch into branch ... checked out at ...". Detach HEAD first so
+        # the fetch can overwrite the branch. The base repo is a review cache, never a
+        # working copy for the user.
+        try:
+            head = subprocess.run(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if head.returncode == 0 and head.stdout.strip() == local_branch:
+                logger.info(
+                    "Base repo is on %s; detaching HEAD so fetch can overwrite the branch",
+                    local_branch,
+                )
+                subprocess.run(
+                    ["git", "switch", "--detach"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+        except subprocess.TimeoutExpired:
+            pass
+
         try:
             # Fetch the PR ref from GitHub
             # GitHub exposes PRs as refs/pull/{number}/head

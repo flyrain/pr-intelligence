@@ -144,7 +144,7 @@ curl \"http://127.0.0.1:8080/reviews/pr/123/latest\"
 }
 ```
 
-When the review provider is `codex_local`, `session_ids` contains the final Codex session to resume after multi-step review. Reports also include the repository path and PR branch needed to recreate the review context before opening an interactive resume session.
+When the review provider is `codex_local` or `claude_code_local`, `session_ids` contains the final CLI session to resume after multi-step review. `resume_cwd` is where the resume command should `cd` — for `codex_local` that's the base repo (Codex keys sessions globally), and for `claude_code_local` that's the review worktree (Claude keys sessions by cwd, so the worktree is kept after review so `claude --resume` can find it).
 
 ### GET /reviews/pr/{pr_number}/latest.md
 

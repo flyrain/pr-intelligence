@@ -4,8 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
-import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from polaris_pr_intel.llm._base_local_cli import BaseLocalCLIAdapter
@@ -31,16 +30,6 @@ class CodexLocalAdapter(BaseLocalCLIAdapter):
     reasoning_effort: str = "medium"
     repo_dir: str = ""
     fail_review_job_on_generation_error: bool = True
-    _session_ids_local: threading.local = field(
-        default_factory=threading.local,
-        init=False,
-        repr=False,
-    )
-    _resume_context_local: threading.local = field(
-        default_factory=threading.local,
-        init=False,
-        repr=False,
-    )
 
     def _wrap_skill_prompt(self, skill_body: str) -> str:
         return (
@@ -90,36 +79,6 @@ class CodexLocalAdapter(BaseLocalCLIAdapter):
 
     def _format_followup_failure(self, exc: Exception) -> str:
         return self._format_failure_detail(exc)
-
-    @property
-    def session_ids(self) -> list[str]:
-        return list(getattr(self._session_ids_local, "session_ids", []))
-
-    def reset_session_ids(self) -> None:
-        self._session_ids_local.session_ids = []
-
-    @property
-    def resume_context(self) -> dict[str, str]:
-        context = getattr(self._resume_context_local, "context", None)
-        if isinstance(context, dict):
-            return {
-                key: value
-                for key, value in context.items()
-                if isinstance(key, str) and isinstance(value, str)
-            }
-        cwd = self.repo_dir.strip()
-        return {"cwd": cwd} if cwd else {}
-
-    def reset_resume_context(self) -> None:
-        self._resume_context_local.context = {}
-
-    def set_review_resume_context(self, *, cwd: str = "", branch: str = "") -> None:
-        context: dict[str, str] = {}
-        if cwd:
-            context["cwd"] = cwd
-        if branch:
-            context["branch"] = branch
-        self._resume_context_local.context = context
 
     @staticmethod
     def _find_session_ids(value: object) -> list[str]:

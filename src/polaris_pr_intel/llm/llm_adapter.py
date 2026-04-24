@@ -54,7 +54,11 @@ def _wrap_method_with_worktree(method, worktree_manager: WorktreeManager, repo_m
             original_repo_dir = method.__self__.repo_dir
             set_resume_context = getattr(method.__self__, "set_review_resume_context", None)
             if callable(set_resume_context):
-                set_resume_context(cwd=str(repo_manager.get_base_repo()), branch=branch)
+                if getattr(method.__self__, "keep_worktree_for_resume", False):
+                    resume_cwd = str(worktree_ctx.path)
+                else:
+                    resume_cwd = str(repo_manager.get_base_repo())
+                set_resume_context(cwd=resume_cwd, branch=branch)
             method.__self__.repo_dir = str(worktree_ctx.path)
             return method(pr)
         finally:
@@ -109,7 +113,7 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
             worktree_manager = WorktreeManager(
                 base_repo_path=base_repo,
                 worktree_base_dir=worktree_base,
-                auto_cleanup=True,
+                auto_cleanup=not adapter.keep_worktree_for_resume,
             )
             # Wrap the PR review methods to run in temporary worktrees
             adapter.analyze_pr_comprehensive = _wrap_method_with_worktree(
@@ -157,7 +161,7 @@ def build_llm_adapter(settings: Settings) -> LLMAdapter:
             worktree_manager = WorktreeManager(
                 base_repo_path=base_repo,
                 worktree_base_dir=worktree_base,
-                auto_cleanup=True,
+                auto_cleanup=not adapter.keep_worktree_for_resume,
             )
             # Wrap the PR review methods to run in temporary worktrees
             adapter.analyze_pr_comprehensive = _wrap_method_with_worktree(

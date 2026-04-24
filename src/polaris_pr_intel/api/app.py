@@ -614,6 +614,7 @@ def create_app(
             session_id = report.session_ids[-1]
             resume_cmd = build_resume_command(
                 session_id=session_id,
+                provider=report.provider,
                 cwd=report.resume_cwd or resume_cwd,
                 pr_number=report.pr_number,
                 branch=report.resume_branch,

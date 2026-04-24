@@ -10,30 +10,44 @@ def _shell_join(parts: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
-def build_resume_command(
-    *,
-    session_id: str,
-    cwd: str = "",
-    pr_number: int | None = None,
-    branch: str = "",
+def _build_claude_resume_command(session_id: str, cwd: str) -> str:
+    tail = _shell_join(["claude", "--resume", session_id])
+    if not cwd:
+        return tail
+    return _shell_join(["cd", cwd]) + " && " + tail
+
+
+def _build_codex_resume_command(
+    session_id: str, cwd: str, pr_number: int | None, branch: str
 ) -> str:
+    parts = ["codex", "resume", "--include-non-interactive"]
+    if cwd:
+        parts.extend(["-C", cwd])
+    parts.append(session_id)
+    tail = _shell_join(parts)
     if cwd and pr_number and branch:
         return " && ".join(
             [
                 _shell_join(["cd", cwd]),
                 _shell_join(["git", "fetch", "origin", f"pull/{pr_number}/head"]),
                 _shell_join(["git", "switch", "-C", branch, "FETCH_HEAD"]),
-                _shell_join(
-                    ["codex", "resume", "--include-non-interactive", "-C", cwd, session_id]
-                ),
+                tail,
             ]
         )
+    return tail
 
-    parts = ["codex", "resume", "--include-non-interactive"]
-    if cwd:
-        parts.extend(["-C", cwd])
-    parts.append(session_id)
-    return _shell_join(parts)
+
+def build_resume_command(
+    *,
+    session_id: str,
+    provider: str,
+    cwd: str = "",
+    pr_number: int | None = None,
+    branch: str = "",
+) -> str:
+    if provider == "claude_code_local":
+        return _build_claude_resume_command(session_id, cwd)
+    return _build_codex_resume_command(session_id, cwd, pr_number, branch)
 
 
 def render_new_updated_row(*, pr_number: int, html_url: str, title: str, updated_at_label: str) -> str:
@@ -152,6 +166,7 @@ def render_deep_review_entry(
     if session_ids:
         resume_cmd = build_resume_command(
             session_id=session_ids[-1],
+            provider=provider,
             cwd=resume_cwd,
             pr_number=pr_number,
             branch=resume_branch,

@@ -4,8 +4,10 @@ import json
 import logging
 import re
 import shlex
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 from polaris_pr_intel.llm._heuristic import HeuristicLLMAdapter
 from polaris_pr_intel.llm._utils import _clamp
@@ -19,6 +21,46 @@ class BaseLocalCLIAdapter(HeuristicLLMAdapter):
     review_skill_file: str = ""
     analysis_skill_file: str = ""
     fail_review_job_on_generation_error: bool = False
+    repo_dir: str = ""
+    # True when resume needs the CLI to run from the same cwd the review used, so the
+    # wrapper keeps the worktree alive and records its path as resume_cwd.
+    keep_worktree_for_resume: ClassVar[bool] = False
+    _session_ids_local: threading.local = field(
+        default_factory=threading.local,
+        init=False,
+        repr=False,
+    )
+    _resume_context_local: threading.local = field(
+        default_factory=threading.local,
+        init=False,
+        repr=False,
+    )
+
+    @property
+    def session_ids(self) -> list[str]:
+        return list(getattr(self._session_ids_local, "session_ids", []))
+
+    def reset_session_ids(self) -> None:
+        self._session_ids_local.session_ids = []
+
+    @property
+    def resume_context(self) -> dict[str, str]:
+        context = getattr(self._resume_context_local, "context", None)
+        if isinstance(context, dict) and context:
+            return dict(context)
+        cwd = self.repo_dir.strip()
+        return {"cwd": cwd} if cwd else {}
+
+    def reset_resume_context(self) -> None:
+        self._resume_context_local.context = {}
+
+    def set_review_resume_context(self, *, cwd: str = "", branch: str = "") -> None:
+        context: dict[str, str] = {}
+        if cwd:
+            context["cwd"] = cwd
+        if branch:
+            context["branch"] = branch
+        self._resume_context_local.context = context
 
     def __post_init__(self):
         if self.review_skill_file:

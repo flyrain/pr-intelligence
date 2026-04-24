@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
+from typing import ClassVar
 
 from polaris_pr_intel.llm._base_local_cli import BaseLocalCLIAdapter
 from polaris_pr_intel.models import PRSubagentFinding, PullRequestSnapshot
@@ -17,6 +18,22 @@ class ClaudeCodeLocalAdapter(BaseLocalCLIAdapter):
     timeout_sec: int = 300
     max_turns: int = 15
     repo_dir: str = ""
+    # Claude keys sessions by cwd (~/.claude/projects/<hash(cwd)>/), so resume must run
+    # from the same cwd the review used.
+    keep_worktree_for_resume: ClassVar[bool] = True
+
+    def _record_session_id_from_envelope(self, text: str) -> None:
+        try:
+            envelope = json.loads(text or "")
+        except (json.JSONDecodeError, TypeError):
+            return
+        session_id = envelope.get("session_id") if isinstance(envelope, dict) else None
+        if not isinstance(session_id, str) or not session_id:
+            return
+        current = self.session_ids
+        if session_id not in current:
+            current.append(session_id)
+        self._session_ids_local.session_ids = current
 
     @staticmethod
     def _detail_from_exception(exc: Exception) -> str:
@@ -248,4 +265,5 @@ Routing guidance:
             timeout=self.timeout_sec,
             cwd=self.repo_dir or None,
         )
+        self._record_session_id_from_envelope(proc.stdout)
         return self._extract_json_payload(proc.stdout)

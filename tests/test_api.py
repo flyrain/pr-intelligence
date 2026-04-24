@@ -934,6 +934,56 @@ def test_ui_deep_review_shows_resume_command_for_codex_sessions() -> None:
     ) in resp.text
 
 
+def test_ui_deep_review_shows_resume_command_for_claude_code_sessions() -> None:
+    client, repo, _, _ = _client(Settings(github_token="", git_repo_path="/Users/yufei/asf/polaris"))
+    now = datetime.now(timezone.utc)
+    worktree_path = "/Users/yufei/asf/polaris/.worktrees/pr-303"
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=303,
+            title="Claude-backed review",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=1,
+            additions=3,
+            deletions=1,
+            html_url="https://example.com/pr/303",
+            updated_at=now,
+        )
+    )
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=303,
+            generated_at=datetime(2026, 3, 11, 11, 0, tzinfo=timezone.utc),
+            provider="claude_code_local",
+            model="opus",
+            session_ids=["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"],
+            resume_cwd=worktree_path,
+            resume_branch="pr-303",
+            overall_priority=0.4,
+            overall_recommendation="resumeable",
+        )
+    )
+
+    resp = client.get("/ui")
+
+    assert resp.status_code == 200
+    assert "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" in resp.text
+    assert (
+        f'data-resume-command="cd {worktree_path} &amp;&amp; claude --resume '
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    ) in resp.text
+    assert "git fetch" not in resp.text
+    assert "codex resume" not in resp.text
+
+
 def test_ui_needs_review_folds_after_first_ten() -> None:
     client, repo, _, _ = _client()
     now = datetime.now(timezone.utc)
@@ -1455,6 +1505,54 @@ def test_latest_pr_review_markdown_shows_resume_session_commands() -> None:
         f"git switch -C pr-334 FETCH_HEAD && codex resume --include-non-interactive "
         f"-C /Users/yufei/asf/polaris {session_id}`"
     ) in resp.text
+
+
+def test_latest_pr_review_markdown_shows_claude_resume_session_commands() -> None:
+    client, repo, _, _ = _client(Settings(github_token="", git_repo_path="/Users/yufei/asf/polaris"))
+    now = datetime.now(timezone.utc)
+    session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    worktree_path = "/Users/yufei/asf/polaris/.worktrees/pr-335"
+    repo.upsert_pr(
+        PullRequestSnapshot(
+            number=335,
+            title="Claude session review",
+            body="",
+            state="open",
+            draft=False,
+            author="alice",
+            labels=[],
+            requested_reviewers=[],
+            comments=0,
+            review_comments=0,
+            commits=1,
+            changed_files=2,
+            additions=10,
+            deletions=4,
+            html_url="https://example.com/pr/335",
+            updated_at=now,
+        )
+    )
+    repo.save_pr_review_report(
+        PRReviewReport(
+            pr_number=335,
+            provider="claude_code_local",
+            model="opus",
+            session_ids=[session_id],
+            resume_cwd=worktree_path,
+            resume_branch="pr-335",
+            findings=[],
+            overall_priority=0.2,
+            overall_recommendation="Standard review path is sufficient.",
+        )
+    )
+
+    resp = client.get("/reviews/pr/335/latest.md")
+
+    assert resp.status_code == 200
+    assert "## Resume Session" in resp.text
+    assert f"`cd {worktree_path} && claude --resume {session_id}`" in resp.text
+    assert "git fetch" not in resp.text
+    assert "codex resume" not in resp.text
 
 
 def test_refresh_endpoint() -> None:

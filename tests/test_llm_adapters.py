@@ -116,6 +116,74 @@ def test_claude_code_local_adapter_raises_on_auth_failure(monkeypatch) -> None:
         adapter.analyze_pr("security-signal", "security and permission model", _pr())
 
 
+def test_claude_code_local_adapter_records_resume_id_from_envelope(monkeypatch) -> None:
+    adapter = ClaudeCodeLocalAdapter(command="claude")
+    resume_id = "019dbb70-d65b-7983-8d34-3350f2222631"
+
+    def _fake_run(*args, **kwargs):
+        class R:
+            stdout = (
+                '{"type":"result","subtype":"success","is_error":false,'
+                f'"session_id":"{resume_id}",'
+                '"result":"{\\"agent_name\\":\\"security-signal\\",\\"focus_area\\":\\"security and permission model\\",\\"verdict\\":\\"medium\\",\\"score\\":0.55,\\"summary\\":\\"moderate risk in changed auth path\\",\\"recommendations\\":[\\"add coverage\\"],\\"confidence\\":0.7}"}'
+            )
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    finding = adapter.analyze_pr("security-signal", "security and permission model", _pr())
+
+    assert finding.verdict == "medium"
+    assert adapter.session_ids == [resume_id]
+
+
+def test_claude_code_local_adapter_isolates_session_ids_per_concurrent_review(monkeypatch) -> None:
+    adapter = ClaudeCodeLocalAdapter(command="claude")
+    reviewer = PRSubagentReviewer(adapter)
+    pr_a = _pr().model_copy(update={"number": 101, "title": "PR 101"})
+    pr_b = _pr().model_copy(update={"number": 102, "title": "PR 102"})
+    release_a = threading.Event()
+    reports: dict[int, object] = {}
+
+    def _fake_run(args, **kwargs):
+        prompt = args[-1]
+        pr_number = 101 if "number: 101" in prompt else 102
+        session_id = f"claude-session-{pr_number}"
+
+        if pr_number == 101:
+            release_a.wait(timeout=1)
+        else:
+            time.sleep(0.05)
+            release_a.set()
+
+        class R:
+            stdout = (
+                '{"type":"result","subtype":"success","is_error":false,'
+                f'"session_id":"{session_id}",'
+                '"result":"{\\"findings\\":[{\\"agent_name\\":\\"code-risk\\",\\"focus_area\\":\\"code risk and complexity\\",\\"verdict\\":\\"medium\\",\\"score\\":0.55,\\"summary\\":\\"moderate risk in changed auth path\\",\\"recommendations\\":[\\"add coverage\\"],\\"confidence\\":0.7}]}"}'
+            )
+
+        return R()
+
+    def _run_review(pr: PullRequestSnapshot) -> None:
+        findings = reviewer.run(pr)
+        reports[pr.number] = reviewer.aggregate(pr, findings)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    thread_a = threading.Thread(target=_run_review, args=(pr_a,))
+    thread_b = threading.Thread(target=_run_review, args=(pr_b,))
+    thread_a.start()
+    time.sleep(0.02)
+    thread_b.start()
+    thread_a.join()
+    thread_b.join()
+
+    assert reports[101].session_ids == ["claude-session-101"]
+    assert reports[102].session_ids == ["claude-session-102"]
+
+
 def test_factory_builds_claude_code_local_adapter(tmp_path, monkeypatch) -> None:
     # Create a fake git repo for testing
     fake_repo = tmp_path / "test-repo"
@@ -550,6 +618,46 @@ def test_worktree_wrapper_records_stable_resume_context(tmp_path) -> None:
     assert adapter.repo_dir == str(tmp_path / "base")
     assert adapter.resume_context == {"cwd": str(tmp_path / "base"), "branch": "pr-77"}
     assert worktree_manager.removed == [77]
+
+
+def test_worktree_wrapper_keeps_worktree_and_records_worktree_cwd_for_claude(tmp_path) -> None:
+    class _Adapter:
+        keep_worktree_for_resume = True
+        repo_dir = str(tmp_path / "base")
+        resume_context: dict[str, str] = {}
+
+        def set_review_resume_context(self, *, cwd: str = "", branch: str = "") -> None:
+            self.resume_context = {"cwd": cwd, "branch": branch}
+
+        def analyze_pr_comprehensive(self, pr: PullRequestSnapshot) -> list[object]:
+            return []
+
+    class _RepoManager:
+        def fetch_pr_branch(self, pr_number: int) -> str:
+            return f"pr-{pr_number}"
+
+        def get_base_repo(self):
+            return tmp_path / "base"
+
+    class _WorktreeManager:
+        auto_cleanup = False
+        removed: list[int] = []
+
+        def create_worktree_for_pr(self, pr_number: int, branch: str):
+            return type("WorktreeContext", (), {"path": tmp_path / "worktrees" / f"pr-{pr_number}"})()
+
+        def remove_worktree(self, pr_number: int) -> None:
+            self.removed.append(pr_number)
+
+    adapter = _Adapter()
+    worktree_manager = _WorktreeManager()
+    wrapped = _wrap_method_with_worktree(adapter.analyze_pr_comprehensive, worktree_manager, _RepoManager())
+
+    wrapped(_pr())
+
+    worktree_path = str(tmp_path / "worktrees" / "pr-77")
+    assert adapter.resume_context == {"cwd": worktree_path, "branch": "pr-77"}
+    assert worktree_manager.removed == []
 
 
 def test_factory_builds_codex_local_adapter(tmp_path, monkeypatch) -> None:
